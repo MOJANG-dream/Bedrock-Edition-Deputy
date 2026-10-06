@@ -199,8 +199,8 @@ void clearLocked() {
 }
 
 Geometry computeGeometry(ScreenView& view) {
-    auto size = view.mSize;
-    return {(size.x - kPanelW) / 2.f, (size.y - kPanelH) / 2.f};
+    auto& size = view.mSize;
+    return {(size->x - kPanelW) / 2.f, (size->y - kPanelH) / 2.f};
 }
 
 void renderPanel(BeforeUIRenderEvent& event) {
