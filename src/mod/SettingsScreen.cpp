@@ -117,7 +117,7 @@ bool                          gSeen{false};
 bool                          gClosing{false};
 std::chrono::steady_clock::time_point gOpenedAt;
 std::optional<std::pair<float, float>> gPendingClick;
-void (*gSaveCallback)() = nullptr;
+std::function<void()>             gSaveCallback;
 float                         gInvScale{1.f};
 
 // ---------------------------------------------------------------------------
@@ -378,7 +378,7 @@ bool isOpen() {
     return static_cast<bool>(gScene);
 }
 
-void setSaveCallback(void (*callback)()) { gSaveCallback = callback; }
+void setSaveCallback(std::function<void()> callback) { gSaveCallback = std::move(callback); }
 
 void install() {
     SceneRenderHook::hook();
