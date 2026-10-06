@@ -28,6 +28,8 @@ namespace {
 
 Config                       config;
 std::atomic<bool>            altHeld{false};
+std::atomic<bool>            swapKeyHeld{false}; // 边沿触发：忽略长按的键盘重复事件
+std::atomic<bool>            menuKeyHeld{false};
 std::vector<ll::event::ListenerPtr> listeners;
 
 void runOnClientThread(std::function<void()> task) {
@@ -37,6 +39,8 @@ void runOnClientThread(std::function<void()> task) {
 } // namespace
 
 Config& modConfig() { return config; }
+
+ll::Logger& modLogger() { return DeputyMod::getInstance().getSelf().getLogger(); }
 
 // ---------------------------------------------------------------------------
 // 输入处理（回调来自窗口输入线程，只做状态记录与线程切换）
@@ -51,32 +55,51 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
         return;
     }
 
-    if (key != Keyboard::F) {
+    // 设置界面正在捕获键位：一切按键交给界面处理。
+    if (settings_screen::isCapturingKey()) {
         return;
     }
 
-    if (!down) {
-        return; // 抬起放行，防止卡键
-    }
+    bool const isMenuKey = key == config.menuKey;
+    bool const isSwapKey = key == config.swapKey;
 
-    // Alt+F：打开配置界面；已打开时关闭
-    if (altHeld.load(std::memory_order_relaxed)) {
-        if (config.enableMenuKey) {
-            event.cancel();
-            runOnClientThread([] {
-                if (settings_screen::isOpen()) {
-                    settings_screen::close();
-                } else {
-                    settings_screen::open();
-                }
-            });
+    if (!down) {
+        // 抬起：复位边沿状态并放行，防止卡键。
+        if (isMenuKey) {
+            menuKeyHeld.store(false, std::memory_order_relaxed);
+        }
+        if (isSwapKey) {
+            swapKeyHeld.store(false, std::memory_order_relaxed);
         }
         return;
     }
 
-    // 设置界面打开时，界面自己处理 F（不交换）。
+    // Alt+菜单键：打开/关闭配置界面
+    if (isMenuKey && config.enableMenuKey && altHeld.load(std::memory_order_relaxed)) {
+        if (menuKeyHeld.exchange(true, std::memory_order_relaxed)) {
+            return; // 长按重复
+        }
+        event.cancel();
+        runOnClientThread([] {
+            if (settings_screen::isOpen()) {
+                settings_screen::close();
+            } else {
+                settings_screen::open();
+            }
+        });
+        return;
+    }
+
+    // 设置界面打开时，界面自己处理按键（不交换）。
     if (settings_screen::isOpen()) {
         return;
+    }
+
+    if (!isSwapKey || !config.enableSwapKey) {
+        return;
+    }
+    if (swapKeyHeld.exchange(true, std::memory_order_relaxed)) {
+        return; // 长按重复
     }
 
     // 背包/容器界面悬停在玩家物品上：送入副手
@@ -87,12 +110,12 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
     }
 
     // HUD 下：交换主副手
-    if (config.enableSwapKey) {
-        auto clientInstance = ll::service::bedrock::getClientInstance();
-        if (clientInstance && clientInstance->isInGameInputEnabled()) {
-            event.cancel();
-            runOnClientThread([] { inventory_actions::swapHotbarOffhand(); });
-        }
+    auto clientInstance = ll::service::bedrock::getClientInstance();
+    if (clientInstance && clientInstance->isInGameInputEnabled()) {
+        event.cancel();
+        runOnClientThread([] { inventory_actions::swapHotbarOffhand(); });
+    } else {
+        modLogger().debug("swap key pressed with no in-game input and no hovered player slot");
     }
 }
 
@@ -162,6 +185,8 @@ bool DeputyMod::disable() {
     shield_block::uninstall();
     inventory_actions::uninstall();
     altHeld.store(false, std::memory_order_relaxed);
+    swapKeyHeld.store(false, std::memory_order_relaxed);
+    menuKeyHeld.store(false, std::memory_order_relaxed);
 
     return true;
 }
