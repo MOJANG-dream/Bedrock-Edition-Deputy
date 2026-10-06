@@ -27,9 +27,11 @@
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/containers/ContainerEnumName.h"
 #include "mc/world/inventory/network/ItemStackNetIdVariant.h"
+#include "mc/world/inventory/network/ItemStackRequestBatch.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/item/ItemStackBase.h"
 
+#include <atomic>
 #include <cstdint>
 
 namespace bedrock_edition_deputy {
@@ -176,13 +178,19 @@ void sendSwapPacket() {
         return;
     }
 
-    // 构造交换包
-    ItemStackRequestPacket packet{};
+    // 构造交换包。客户端下 ItemStackRequestPacketPayload 没有默认构造（被 prevent），
+    // 只能通过 ItemStackRequestBatch 走 MCAPI 构造函数；这里传入空 batch，
+    // 随后直接向 payload 的 cereal 请求列表填充交换动作。
+    ItemStackRequestBatch batch{};
+    ItemStackRequestPacket packet{batch};
     packet.mSerializationMode = SerializationMode::CerealOnly;
 
     // 创建请求数据
     ItemStackRequestPacketData::RequestData requestData{};
-    requestData.mClientRequestId->mRawId = ItemStackRequestId::sNextRawId++; // 唯一请求 ID
+    // TypedClientNetId::sNextRawId 未从客户端 dll 导出（LNK2019），
+    // 使用独立高段自增 id，避免与原版客户端计数器分配的 id 冲突。
+    static std::atomic<int> customRequestId{0x40000000};
+    requestData.mClientRequestId->mRawId = customRequestId.fetch_add(1, std::memory_order_relaxed);
 
     // 创建交换动作
     ItemStackRequestCereal::SwapActionData swapAction{};
