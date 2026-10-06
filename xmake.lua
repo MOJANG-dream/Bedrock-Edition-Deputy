@@ -3,15 +3,12 @@ add_rules("mode.debug", "mode.release")
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
 
 option("target_type")
-    set_default("server")
+    set_default("client")
     set_showmenu(true)
     set_values("server", "client")
 option_end()
 
--- add_requires("levilamina x.x.x") for a specific version
--- add_requires("levilamina develop") to use develop version
--- please note that you should add bdslibrary yourself if using dev version
-add_requires("levilamina", {configs = {target_type = get_config("target_type")}})
+add_requires("levilamina 26.51.6", {configs = {target_type = get_config("target_type")}})
 
 add_requires("levibuildscript")
 
@@ -19,7 +16,7 @@ if not has_config("vs_runtime") then
     set_runtimes("MD")
 end
 
-target("my-mod") -- Change this to your mod name.
+target("bedrock-edition-deputy")
     add_rules("@levibuildscript/linkrule")
     add_rules("@levibuildscript/modpacker")
     if is_plat("windows") then
