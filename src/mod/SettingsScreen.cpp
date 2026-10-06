@@ -17,7 +17,7 @@
 #include "mc/client/gui/FontHandle.h"
 #include "mc/client/gui/FontRepository.h"
 #include "mc/client/gui/GuiData.h"
-#include "mc/client/gui/ScreenView.h"
+#include "mc/client/gui/screens/ScreenView.h"
 #include "mc/client/gui/TextAlignment.h"
 #include "mc/client/gui/TextMeasureData.h"
 #include "mc/client/gui/screens/AbstractScene.h"
