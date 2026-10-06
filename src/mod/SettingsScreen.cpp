@@ -77,27 +77,40 @@ struct RowDef {
     bool Config::*field;
 };
 constexpr std::array<RowDef, 6> kRows = {{
-    {"F 交换主副手", &Config::enableSwapKey},
-    {"Alt+F 打开本界面", &Config::enableMenuKey},
+    {"交换主副手", &Config::enableSwapKey},
+    {"Alt+菜单键打开本界面", &Config::enableMenuKey},
     {"右键优先使用主手", &Config::prioritizeMainHand},
     {"盾牌右键格挡", &Config::enableShieldRightClick},
     {"蹲下时不举盾格挡", &Config::disableShieldSneakBlock},
-    {"背包内 F 放入副手", &Config::enableInventoryOffhand},
+    {"背包内按键放入副手", &Config::enableInventoryOffhand},
 }};
+
+struct KeyRowDef {
+    const char* label;
+    int Config::*field;
+};
+constexpr std::array<KeyRowDef, 2> kKeyRows = {{
+    {"交换按键", &Config::swapKey},
+    {"菜单按键", &Config::menuKey},
+}};
+
+constexpr size_t kTotalRows = kRows.size() + kKeyRows.size();
 
 constexpr float kPanelW   = 210.f;
 constexpr float kHeaderH  = 18.f;
 constexpr float kRowH     = 15.f;
 constexpr float kFooterH  = 17.f;
 constexpr float kPad      = 6.f;
-constexpr float kPanelH   = kPad + kHeaderH + kRows.size() * kRowH + kFooterH + kPad;
+constexpr float kPanelH   = kPad + kHeaderH + kTotalRows * kRowH + kFooterH + kPad;
 constexpr float kSwitchW  = 18.f;
 constexpr float kSwitchH  = 9.f;
+constexpr float kKeyBoxW  = 34.f;
+constexpr float kKeyBoxH  = 11.f;
 
 struct Geometry {
     float left, top;
     float rowTop(size_t i) const { return top + kPad + kHeaderH + i * kRowH; }
-    float footerTop() const { return top + kPad + kHeaderH + kRows.size() * kRowH; }
+    float footerTop() const { return top + kPad + kHeaderH + kTotalRows * kRowH; }
     bool hitRow(size_t i, float x, float y) const {
         float rt = rowTop(i);
         return x >= left && x < left + kPanelW && y >= rt && y < rt + kRowH;
@@ -119,6 +132,7 @@ std::chrono::steady_clock::time_point gOpenedAt;
 std::optional<std::pair<float, float>> gPendingClick;
 std::function<void()>             gSaveCallback;
 float                         gInvScale{1.f};
+int                           gCapturing{-1}; // 正在捕获键位的键绑定行下标（kKeyRows），-1 表示未捕获
 
 // ---------------------------------------------------------------------------
 // 绘制原语
@@ -180,6 +194,55 @@ void drawSwitch(MinecraftUIRenderContext& ctx, float x, float y, bool on) {
     fillRect(ctx, knobX, y + 1.f, knob, knob, on ? Rgb{1, 1, 1} : Rgb{0.82f, 0.82f, 0.83f});
 }
 
+// 键码转可读名称（键码与 Windows 虚拟键码一致）。
+std::string keyName(int vk) {
+    if (vk >= 'A' && vk <= 'Z') {
+        return std::string(1, static_cast<char>(vk));
+    }
+    if (vk >= '0' && vk <= '9') {
+        return std::string(1, static_cast<char>(vk));
+    }
+    if (vk >= 0x70 && vk <= 0x7B) {
+        return "F" + std::to_string(vk - 0x6F); // F1-F12
+    }
+    if (vk >= 0x60 && vk <= 0x69) {
+        return "Num" + std::to_string(vk - 0x60);
+    }
+    switch (vk) {
+    case 0x20: return "Space";
+    case 0x09: return "Tab";
+    case 0x14: return "Caps";
+    case 0x25: return "左";
+    case 0x26: return "上";
+    case 0x27: return "右";
+    case 0x28: return "下";
+    case 0x2D: return "Ins";
+    case 0x2E: return "Del";
+    case 0x24: return "Home";
+    case 0x23: return "End";
+    case 0x21: return "PgUp";
+    case 0x22: return "PgDn";
+    case 0xBA: return ";";
+    case 0xBB: return "=";
+    case 0xBC: return ",";
+    case 0xBD: return "-";
+    case 0xBE: return ".";
+    case 0xBF: return "/";
+    case 0xC0: return "`";
+    case 0xDB: return "[";
+    case 0xDC: return "\\";
+    case 0xDD: return "]";
+    case 0xDE: return "'";
+    default:   return "键" + std::to_string(vk);
+    }
+}
+
+void drawKeyBox(MinecraftUIRenderContext& ctx, float x, float y, std::string const& name, bool capturing) {
+    fillRect(ctx, x, y, kKeyBoxW, kKeyBoxH, capturing ? kAccentDeep : kOff);
+    frameRect(ctx, x, y, kKeyBoxW, kKeyBoxH, capturing ? kAccent : kFrame);
+    drawLabel(ctx, x, y + 2.f, kKeyBoxW, capturing ? "..." : name, kText, ::ui::TextAlignment::Center);
+}
+
 // ---------------------------------------------------------------------------
 // 场景状态
 // ---------------------------------------------------------------------------
@@ -196,6 +259,7 @@ void clearLocked() {
     gSeen    = false;
     gClosing = false;
     gPendingClick.reset();
+    gCapturing = -1;
 }
 
 Geometry computeGeometry(ScreenView& view) {
@@ -229,6 +293,13 @@ void renderPanel(BeforeUIRenderEvent& event) {
         drawSwitch(ctx, geo.left + kPanelW - kPad - kSwitchW, rt + 3.f, on);
     }
 
+    for (size_t i = 0; i < kKeyRows.size(); ++i) {
+        float rt        = geo.rowTop(kRows.size() + i);
+        bool capturing  = gCapturing == static_cast<int>(i);
+        drawLabel(ctx, geo.left + kPad, rt + 3.f, kPanelW - kKeyBoxW - kPad * 3.f, kKeyRows[i].label, capturing ? kAccent : kText);
+        drawKeyBox(ctx, geo.left + kPanelW - kPad - kKeyBoxW, rt + 2.f, keyName(cfg.*(kKeyRows[i].field)), capturing);
+    }
+
     fillRect(ctx, geo.left + kPad, geo.footerTop(), 60.f, kFooterH - 3.f, kClose, 0.85f);
     frameRect(ctx, geo.left + kPad, geo.footerTop(), 60.f, kFooterH - 3.f, kFrame);
     drawLabel(
@@ -259,12 +330,21 @@ void handleClick(float x, float y) {
     for (size_t i = 0; i < kRows.size(); ++i) {
         if (geo.hitRow(i, x, y)) {
             modConfig().*(kRows[i].field) ^= true;
+            gCapturing = -1;
             if (gSaveCallback) {
                 gSaveCallback();
             }
             return;
         }
     }
+    for (size_t i = 0; i < kKeyRows.size(); ++i) {
+        if (geo.hitRow(kRows.size() + i, x, y)) {
+            // 点击进入/切换键位捕获；再点同一行取消捕获。
+            gCapturing = gCapturing == static_cast<int>(i) ? -1 : static_cast<int>(i);
+            return;
+        }
+    }
+    gCapturing = -1;
     if (geo.hitClose(x, y)) {
         if (ownsTop() && !gClosing) {
             gClient->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
@@ -378,6 +458,11 @@ bool isOpen() {
     return static_cast<bool>(gScene);
 }
 
+bool isCapturingKey() {
+    std::lock_guard lock(gMutex);
+    return gScene && gCapturing >= 0;
+}
+
 void setSaveCallback(std::function<void()> callback) { gSaveCallback = std::move(callback); }
 
 void install() {
@@ -452,6 +537,21 @@ void install() {
         }
         event.cancel();
         int key = event.keyCode();
+        if (gCapturing >= 0) {
+            // 键位捕获：Esc 取消；纯修饰键忽略；其余按键写入绑定。
+            if (key == 0x1b) {
+                gCapturing = -1;
+            } else if (key == 0x10 || key == 0x11 || key == 0x12 || (key >= 0xA0 && key <= 0xA5)) {
+                // Shift / Ctrl / Alt 及其左右变体：忽略，继续等待
+            } else {
+                modConfig().*(kKeyRows[gCapturing].field) = key;
+                gCapturing = -1;
+                if (gSaveCallback) {
+                    gSaveCallback();
+                }
+            }
+            return;
+        }
         if (key == 0x1b || key == 0x0d) { // Esc / Enter 关闭
             if (!gClosing) {
                 gClient->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
