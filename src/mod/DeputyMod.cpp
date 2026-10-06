@@ -9,6 +9,7 @@
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/input/KeyInputEvent.h"
 #include "ll/api/event/input/MouseInputEvent.h"
+#include "ll/api/io/Logger.h"
 #include "ll/api/mod/RegisterHelper.h"
 #include "ll/api/service/TargetedBedrock.h"
 #include "ll/api/thread/ClientThreadExecutor.h"
@@ -40,7 +41,7 @@ void runOnClientThread(std::function<void()> task) {
 
 Config& modConfig() { return config; }
 
-ll::Logger& modLogger() { return DeputyMod::getInstance().getSelf().getLogger(); }
+ll::io::Logger& modLogger() { return DeputyMod::getInstance().getSelf().getLogger(); }
 
 // ---------------------------------------------------------------------------
 // 输入处理（回调来自窗口输入线程，只做状态记录与线程切换）
