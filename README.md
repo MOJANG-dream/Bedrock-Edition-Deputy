@@ -4,12 +4,12 @@
 
 ## 功能
 
-- **F 键交换主副手物品**：按下 F 键将当前主手物品与副手物品互换（通过向服务端发送物品栈交换请求实现）。
-- **Alt+F 打开配置菜单**：在游戏中显示当前模组配置状态。
-- **按键绑定自定义**：模组按键已集成到`Alt+F`界面，可自由重映射。
-- **右键优先使用主手物品**：右键使用物品时优先使用主手物品（可配置）。
-- **盾牌右键格挡**：手持盾牌（主手或副手）时按住右键即可格挡，如同 Java 版（可配置）。
-- **蹲下不格挡**：手持盾牌时蹲下不再触发格挡，与 Java 版行为一致（可配置）。
+- **F 键交换主副手物品**：游戏内按 F 将当前手持物品与副手物品互换。移动走原版客户端库存事务（legacy inventory transaction），由游戏自身完成容器写入与网络同步。
+- **背包内直接放入副手**：打开背包/容器界面，鼠标悬停在任意物品上按 F，即可将该物品与副手交换（光标持有物品时不触发）。
+- **Alt+F 图形配置界面**：游戏内按 Alt+F 打开独立设置窗口，点击开关即可即时切换功能并保存，不再使用聊天框菜单。
+- **盾牌右键格挡**：手持盾牌（主手或副手）时按住右键即可举盾格挡，减速、动画与服务端伤害判定均与原版潜行格挡一致；仅副手持盾且主手拿着食物/弓/方块等可右键使用的物品时，优先使用主手物品。
+- **蹲下不格挡**：手持盾牌时单纯蹲下不再触发格挡，与 Java 版行为一致（可配置）。
+- **右键优先使用主手物品**（可配置）。
 
 ## 使用指南
 
@@ -17,10 +17,10 @@
 
 | 按键 | 说明 |
 |------|------|
-| `F` | 交换主手与副手物品 |
-| `Alt+F` | 打开模组配置菜单 |
+| `F` | 游戏内交换主手与副手；背包界面悬停物品时将其送入副手 |
+| `Alt+F` | 打开/关闭图形配置界面 |
 
-按键可在 设置 → 键盘 中重新绑定（找到 `Bedrock Edition Deputy` 相关条目）。
+配置界面也可按 `Esc` 或 `Enter`、点击「关闭」按钮关闭。
 
 ### 配置文件
 
@@ -28,20 +28,22 @@
 
 ```json
 {
-    "version": 2,
+    "version": 3,
     "enableSwapKey": true,
     "enableMenuKey": true,
     "prioritizeMainHand": true,
     "enableShieldRightClick": true,
-    "disableShieldSneakBlock": true
+    "disableShieldSneakBlock": true,
+    "enableInventoryOffhand": true
 }
 ```
 
-- `enableSwapKey`：是否启用 F 键交换主副手物品。
-- `enableMenuKey`：是否启用 Alt+F 打开配置菜单。
+- `enableSwapKey`：是否启用游戏内 F 键交换主副手物品。
+- `enableMenuKey`：是否启用 Alt+F 打开图形配置界面。
 - `prioritizeMainHand`：右键使用物品时是否优先使用主手物品。
 - `enableShieldRightClick`：是否启用盾牌右键格挡。
 - `disableShieldSneakBlock`：是否禁用蹲下格挡（仅持盾时生效，关闭后恢复原版蹲下格挡）。
+- `enableInventoryOffhand`：是否启用背包界面悬停物品按 F 送入副手。
 
 ## 构建
 
@@ -58,6 +60,10 @@ xmake
 ## 安装
 
 将 `bin/bedrock-edition-deputy/` 目录复制到 LeviLamina 客户端的 `plugins/` 目录下，然后启动客户端即可。
+
+## 致谢
+
+物品移动、输入注入与自绘界面的实现方式参考了开源客户端模组 [Lamium](https://github.com/amatouhake/Lamium)（LGPL-3.0）。
 
 ## 贡献
 
