@@ -9,6 +9,9 @@ void open();
 void close();
 bool isOpen();
 
+// 界面是否正在捕获新的键位（此时模组主按键处理应当让行）。
+bool isCapturingKey();
+
 // 开关切换后的持久化回调（由模组入口注册，负责写 config.json）。
 void setSaveCallback(std::function<void()> callback);
 
