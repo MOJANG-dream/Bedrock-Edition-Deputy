@@ -27,12 +27,19 @@
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/containers/ContainerEnumName.h"
 #include "mc/world/inventory/network/ItemStackNetIdVariant.h"
-#include "mc/world/inventory/network/ItemStackRequestBatch.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/item/ItemStackBase.h"
 
 #include <atomic>
 #include <cstdint>
+
+#ifdef LL_PLAT_C
+// 客户端 dll 中 ItemStackRequestPacketPayload 的默认构造函数只有声明、没有导出
+// （头文件中被 "prevent constructor by default"）。在此提供本模块内定义，
+// 使 ItemStackRequestPacket{} 可以链接；= default 会将 mRequests 正常初始化为空 vector，
+// 析构仍使用 dll 导出的 MCAPI 析构函数。
+ItemStackRequestPacketPayload::ItemStackRequestPacketPayload() = default;
+#endif
 
 namespace bedrock_edition_deputy {
 
@@ -178,11 +185,8 @@ void sendSwapPacket() {
         return;
     }
 
-    // 构造交换包。客户端下 ItemStackRequestPacketPayload 没有默认构造（被 prevent），
-    // 只能通过 ItemStackRequestBatch 走 MCAPI 构造函数；这里传入空 batch，
-    // 随后直接向 payload 的 cereal 请求列表填充交换动作。
-    ItemStackRequestBatch batch{};
-    ItemStackRequestPacket packet{batch};
+    // 构造交换包（payload 默认构造由本文件顶部提供的 = default 定义满足链接）
+    ItemStackRequestPacket packet{};
     packet.mSerializationMode = SerializationMode::CerealOnly;
 
     // 创建请求数据
