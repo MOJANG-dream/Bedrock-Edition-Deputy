@@ -10,6 +10,7 @@
 #include "mc/client/input/ClientMoveInputHandler.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/deps/ecs/Optional.h"
+#include "mc/deps/ecs/gamerefs_entity/EntityContext.h"
 #include "mc/deps/shared_types/legacy/item/UseAnimation.h"
 #include "mc/deps/vanilla_components/ActorDataFlagComponent.h"
 #include "mc/deps/vanilla_components/MovementAbilitiesComponent.h"
@@ -20,6 +21,7 @@
 #include "mc/entity/components/WasInWaterFlagComponent.h"
 #include "mc/input/MoveInputState.h"
 #include "mc/network/packet/PlayerAuthInputPacketPayload.h"
+#include "mc/world/actor/ActorFlags.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
@@ -27,10 +29,14 @@
 
 #include <atomic>
 
-// 实现参考开源客户端模组 Lamium（LGPL-3.0，amatouhake/Lamium）的
-// PermanentSneak.cpp：在输入系统上游 extractRawHIDInput 给原版喂一份带
-// SneakDown 的临时输入副本，使客户端预测与发送给服务端的 auth input 完全
-// 一致，服务端按基岩版原生规则（潜行 + 持盾）判定格挡。
+// 设计说明（基岩版服务端以「潜行 + 持盾」作为格挡判定条件，无法绕开）：
+// 1) 不改动本地输入管线 —— 本地玩家不会真的蹲下，视角/碰撞箱保持站立，
+//    右键的放置方块、使用物品等交互完全不受影响。
+// 2) 只在发往服务端的 PlayerAuthInputPacket 里伪造完整的潜行位
+//    （状态位 Sneaking/SneakDown/SneakCurrentRaw + 边沿 StartSneaking /
+//    StopSneaking），服务端按原生规则判定格挡并减伤。
+// 3) 本地格挡动画通过直接写 ActorFlags::Blocking 实现。
+// 4) 举盾减速（Java 版 = 潜行速度）通过在输入提取后缩放移动向量实现。
 
 namespace bedrock_edition_deputy {
 Config& modConfig();
@@ -40,7 +46,12 @@ namespace bedrock_edition_deputy::shield_block {
 
 namespace {
 
+// Java 版举盾移动速度 ≈ 潜行速度（约 30%）。
+constexpr float kBlockMoveScale = 0.3f;
+
 std::atomic<bool> gRightHeld{false};
+bool              gWasBlocking{false};
+bool              gBlockVisualOwned{false};
 
 bool isShield(ItemStack const& stack) {
     return !stack.isNull() && stack.getTypeName() == "minecraft:shield";
@@ -68,21 +79,49 @@ bool wantBlock() {
     if (!isShield(player->getOffhandSlot())) {
         return false;
     }
-    // 仅副手持盾：主手拿着可右键使用的物品（食物、药水、弓、方块等）时
-    // 保持 Java 语义——先使用主手物品，不举盾。
+    // 仅副手持盾：主手拿着有右键行为的物品时保持 Java 语义——
+    // 先使用主手物品，不举盾。
     if (mainHand.isNull()) {
         return true;
     }
-    return mainHand.mItem->mUseAnim == SharedTypes::Legacy::UseAnimation::None;
+    if (mainHand.mItem->mUseAnim != SharedTypes::Legacy::UseAnimation::None) {
+        return false; // 食物、药水、弓、弩、三叉戟等
+    }
+    if (mainHand.mItem->mBlockType != nullptr) {
+        return false; // 方块：右键应当放置
+    }
+    return true;
 }
 
 bool holdingShield(Player& player) {
-    return isShield(player.getSelectedItem()) || isShield(player.getOffhandSlot());
+    return isShield(player.getSelectedItem()) || isShield(player->getOffhandSlot());
 }
 
-// 上游输入注入：右键持盾时给原版一份 SneakDown 副本。
+bool physicallySneaking(IClientInstance& clientInstance) {
+    auto* moveInput = ClientMoveInputHandler::getMoveInput(clientInstance);
+    return moveInput && moveInput->mRawInputState->mFlagValues->test(
+                            static_cast<size_t>(MoveInputState::Flag::SneakInputCurrentlyDown)
+                        );
+}
+
+// 本地格挡动画：只在我们自己置位时负责清除，不干扰原版潜行举盾的动画。
+void updateBlockVisual(LocalPlayer& player, bool blocking) {
+    auto component = player.getEntityContext().tryGetComponent<ActorDataFlagComponent>();
+    if (!component) {
+        return;
+    }
+    if (blocking) {
+        component->mValue.set(static_cast<size_t>(ActorFlags::Blocking), true);
+        gBlockVisualOwned = true;
+    } else if (gBlockVisualOwned) {
+        component->mValue.set(static_cast<size_t>(ActorFlags::Blocking), false);
+        gBlockVisualOwned = false;
+    }
+}
+
+// 举盾减速：输入提取完成后缩放移动向量（本地预测与发包共用这份结果）。
 LL_STATIC_HOOK(
-    ExtractShieldSneakHook,
+    ExtractShieldSlowdownHook,
     HookPriority::Normal,
     &ClientInputUpdateSystem::extractRawHIDInput,
     void,
@@ -93,25 +132,23 @@ LL_STATIC_HOOK(
     ::Optional<::SneakingComponent const>     sneaking,
     ::Optional<::WasInWaterFlagComponent const> isInWater
 ) {
+    origin(abilities, moveInput, flags, rawMoveInput, sneaking, isInWater);
+
     auto clientInstance = ll::service::bedrock::getClientInstance();
-    bool inject = false;
-    if (clientInstance) {
-        auto* player = clientInstance->getLocalPlayer();
-        inject = player && holdingShield(*player) && wantBlock()
-            && ClientMoveInputHandler::getMoveInput(*clientInstance) == &moveInput;
-    }
-    if (!inject) {
-        origin(abilities, moveInput, flags, rawMoveInput, sneaking, isInWater);
+    if (!clientInstance || ClientMoveInputHandler::getMoveInput(*clientInstance) != &moveInput) {
         return;
     }
-    // 只改临时副本，绝不污染玩家真实 HID 状态。
-    auto augmented = moveInput;
-    augmented.mRawInputState->mFlagValues->set(static_cast<size_t>(MoveInputState::Flag::SneakDown));
-    origin(abilities, augmented, flags, rawMoveInput, sneaking, isInWater);
+    if (!wantBlock()) {
+        return;
+    }
+    rawMoveInput.mRawMove->x *= kBlockMoveScale;
+    rawMoveInput.mRawMove->y *= kBlockMoveScale;
+    rawMoveInput.mRawInput->mAnalogMoveVector->x *= kBlockMoveScale;
+    rawMoveInput.mRawInput->mAnalogMoveVector->y *= kBlockMoveScale;
 }
 
-// 网络包修正：持盾真蹲（且没有在右键举盾）时清除全部潜行输入位，
-// 使服务端不把这次蹲判定为格挡；本地玩家仍处于真实蹲姿（减速/弯身）。
+// 网络包修正：举盾时伪造潜行位让服务端判定格挡；持盾真蹲（且没有在右键
+// 举盾）时清除全部潜行输入位，实现「蹲下不格挡」。
 LL_TYPE_INSTANCE_HOOK(
     AuthInputShieldHook,
     HookPriority::Normal,
@@ -122,36 +159,59 @@ LL_TYPE_INSTANCE_HOOK(
 ) {
     origin(input);
 
-    auto& config = modConfig();
-    if (!config.disableShieldSneakBlock) {
-        return;
-    }
     auto clientInstance = ll::service::bedrock::getClientInstance();
     if (!clientInstance) {
         return;
     }
     auto* player = clientInstance->getLocalPlayer();
-    if (!player || !holdingShield(*player) || wantBlock()) {
+    if (!player) {
+        gWasBlocking = false;
         return;
     }
-    auto* moveInput = ClientMoveInputHandler::getMoveInput(*clientInstance);
-    if (!moveInput || !moveInput->mRawInputState->mFlagValues->test(
-                        static_cast<size_t>(MoveInputState::Flag::SneakInputCurrentlyDown)
-                    )) {
-        return; // 物理上没有在蹲，无需处理
+
+    auto&       config  = modConfig();
+    bool const  shield  = holdingShield(*player);
+    bool const  blocking = shield && wantBlock();
+    using InputData     = PlayerAuthInputPacketPayload::InputData;
+    auto& bits          = mInputData.get().mContainer;
+
+    updateBlockVisual(*player, blocking);
+
+    if (blocking) {
+        bits.set(static_cast<size_t>(InputData::Sneaking), true);
+        bits.set(static_cast<size_t>(InputData::SneakDown), true);
+        bits.set(static_cast<size_t>(InputData::SneakCurrentRaw), true);
+        // 潜行与冲刺互斥。
+        bits.set(static_cast<size_t>(InputData::Sprinting), false);
+        bits.set(static_cast<size_t>(InputData::SprintDown), false);
+        bits.set(static_cast<size_t>(InputData::StartSprinting), false);
+        if (!gWasBlocking) {
+            bits.set(static_cast<size_t>(InputData::StartSneaking), true);
+            bits.set(static_cast<size_t>(InputData::SneakPressedRaw), true);
+            bits.set(static_cast<size_t>(InputData::StopSprinting), true);
+        }
+    } else if (gWasBlocking && !physicallySneaking(*clientInstance)) {
+        // 格挡刚结束且物理上没有在蹲：发送结束潜行边沿。
+        bits.set(static_cast<size_t>(InputData::Sneaking), false);
+        bits.set(static_cast<size_t>(InputData::SneakDown), false);
+        bits.set(static_cast<size_t>(InputData::SneakCurrentRaw), false);
+        bits.set(static_cast<size_t>(InputData::StopSneaking), true);
+        bits.set(static_cast<size_t>(InputData::SneakReleasedRaw), true);
     }
 
-    using InputData = PlayerAuthInputPacketPayload::InputData;
-    auto& bits = mInputData.get().mContainer;
-    bits.set(static_cast<size_t>(InputData::Sneaking), false);
-    bits.set(static_cast<size_t>(InputData::SneakDown), false);
-    bits.set(static_cast<size_t>(InputData::SneakToggleDown), false);
-    bits.set(static_cast<size_t>(InputData::PersistSneak), false);
-    bits.set(static_cast<size_t>(InputData::StartSneaking), false);
-    bits.set(static_cast<size_t>(InputData::StopSneaking), false);
-    bits.set(static_cast<size_t>(InputData::SneakPressedRaw), false);
-    bits.set(static_cast<size_t>(InputData::SneakCurrentRaw), false);
-    bits.set(static_cast<size_t>(InputData::SneakReleasedRaw), false);
+    if (!blocking && config.disableShieldSneakBlock && shield && physicallySneaking(*clientInstance)) {
+        bits.set(static_cast<size_t>(InputData::Sneaking), false);
+        bits.set(static_cast<size_t>(InputData::SneakDown), false);
+        bits.set(static_cast<size_t>(InputData::SneakToggleDown), false);
+        bits.set(static_cast<size_t>(InputData::PersistSneak), false);
+        bits.set(static_cast<size_t>(InputData::StartSneaking), false);
+        bits.set(static_cast<size_t>(InputData::StopSneaking), false);
+        bits.set(static_cast<size_t>(InputData::SneakPressedRaw), false);
+        bits.set(static_cast<size_t>(InputData::SneakCurrentRaw), false);
+        bits.set(static_cast<size_t>(InputData::SneakReleasedRaw), false);
+    }
+
+    gWasBlocking = blocking;
 }
 
 } // namespace
@@ -159,14 +219,16 @@ LL_TYPE_INSTANCE_HOOK(
 void setRightHeld(bool held) { gRightHeld.store(held, std::memory_order_relaxed); }
 
 void install() {
-    ExtractShieldSneakHook::hook();
+    ExtractShieldSlowdownHook::hook();
     AuthInputShieldHook::hook();
 }
 
 void uninstall() {
     AuthInputShieldHook::unhook();
-    ExtractShieldSneakHook::unhook();
+    ExtractShieldSlowdownHook::unhook();
     gRightHeld.store(false, std::memory_order_relaxed);
+    gWasBlocking      = false;
+    gBlockVisualOwned = false;
 }
 
 } // namespace bedrock_edition_deputy::shield_block
