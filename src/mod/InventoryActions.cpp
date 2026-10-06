@@ -1,5 +1,6 @@
 #include "mod/InventoryActions.h"
 
+#include "ll/api/Logger.h"
 #include "ll/api/memory/Hook.h"
 #include "ll/api/service/TargetedBedrock.h"
 
@@ -27,6 +28,10 @@
 // 实现参考开源客户端模组 Lamium（LGPL-3.0，amatouhake/Lamium）的
 // InventoryMove.cpp 与 HoverTracker.cpp：物品移动一律走游戏自己的容器
 // 事务/请求路径，不手工构造网络包。
+
+namespace bedrock_edition_deputy {
+ll::Logger& modLogger();
+}
 
 namespace bedrock_edition_deputy::inventory_actions {
 
@@ -112,7 +117,7 @@ bool movePair(LocalPlayer& player, Location a, ItemStack const& newA, Location b
         ActiveGuard() { gMoving = true; }
         ~ActiveGuard() { gMoving = false; }
     } guard;
-    gRecordedInv = false;
+    gRecordedInv     = false;
     gRecordedOffhand = false;
 
     auto scope = ItemStackNetManagerBase::_tryBeginClientLegacyTransactionRequest(&player);
@@ -134,9 +139,9 @@ bool movePair(LocalPlayer& player, Location a, ItemStack const& newA, Location b
                 continue;
             }
             InventorySource source;
-            source.mType       = InventorySourceType::ContainerInventory;
+            source.mType        = InventorySourceType::ContainerInventory;
             source.mContainerId = containerIdOf(locs[i].place);
-            source.mFlags      = InventorySource::InventorySourceFlags::NoFlag;
+            source.mFlags       = InventorySource::InventorySourceFlags::NoFlag;
             manager.addAction(
                 ::InventoryAction{source, static_cast<uint>(0), olds[i], news[i]},
                 false
@@ -256,7 +261,7 @@ void swapHotbarOffhand() {
     Location hand{Place::Inventory, selected};
     Location offhand{Place::Offhand, 0};
 
-    ItemStack held = itemAt(*player, hand);
+    ItemStack held   = itemAt(*player, hand);
     ItemStack second = itemAt(*player, offhand);
     if (held.isNull() && second.isNull()) {
         return;
@@ -282,18 +287,22 @@ void swapHoveredToOffhand() {
         target = gHovered;
     }
     if (!target.controller || !isPlayerInventoryCollection(target.collection) || target.index < 0) {
+        modLogger().debug("swapHoveredToOffhand: no hovered player slot");
         return;
     }
+    modLogger().debug("swapHoveredToOffhand: {}[{}]", target.collection, target.index);
 
     auto& controller = *target.controller;
     auto* manager    = controller.mContainerManagerController.get();
     if (!manager || manager->mContainersClosed) {
+        modLogger().debug("swapHoveredToOffhand: container manager unavailable or closed");
         return;
     }
     if (controller._isCursorSelectedActive()) {
         return; // 光标正拿着一摞物品，交给原版点击处理
     }
     if (!manager->hasContainerController(target.collection)) {
+        modLogger().debug("swapHoveredToOffhand: no controller for {}", target.collection);
         return;
     }
     if (manager->getItemStack(target.collection, target.index).isNull()) {
@@ -301,12 +310,26 @@ void swapHoveredToOffhand() {
     }
 
     // 首选：屏幕自己的容器交换请求（界面动画与校验完全原生）。
-    if (manager->hasContainerController("offhand_items")) {
-        manager->handleSwap(
+    // 副手 collection 名称因版本/界面而异，在已注册 collection 中按名字查找。
+    std::string offhandCollection;
+    for (auto const& [name, containerController] : manager->mContainers.get()) {
+        (void)containerController;
+        if (name.find("offhand") != std::string::npos) {
+            offhandCollection = name;
+            break;
+        }
+    }
+    if (!offhandCollection.empty()) {
+        bool ok = manager->handleSwap(
             ::SlotData{target.collection, target.index},
-            ::SlotData{"offhand_items", 0}
+            ::SlotData{offhandCollection, 0}
         );
-        return;
+        modLogger().debug("swapHoveredToOffhand: handleSwap to {} -> {}", offhandCollection, ok);
+        if (ok) {
+            return;
+        }
+    } else {
+        modLogger().debug("swapHoveredToOffhand: no offhand collection, falling back to legacy transaction");
     }
 
     // 回退：该屏幕没有暴露副手 collection（UI 名称因版本而异）时，
