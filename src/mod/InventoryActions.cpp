@@ -1,6 +1,6 @@
 #include "mod/InventoryActions.h"
 
-#include "ll/api/Logger.h"
+#include "ll/api/io/Logger.h"
 #include "ll/api/memory/Hook.h"
 #include "ll/api/service/TargetedBedrock.h"
 
@@ -30,7 +30,7 @@
 // 事务/请求路径，不手工构造网络包。
 
 namespace bedrock_edition_deputy {
-ll::Logger& modLogger();
+ll::io::Logger& modLogger();
 }
 
 namespace bedrock_edition_deputy::inventory_actions {
