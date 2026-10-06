@@ -3,6 +3,7 @@
 #include "ll/api/memory/Hook.h"
 #include "ll/api/service/TargetedBedrock.h"
 
+#include "mc/client/game/ClientInstance.h"
 #include "mc/client/gui/ViewRequest.h"
 #include "mc/client/gui/screens/controllers/ContainerScreenController.h"
 #include "mc/client/gui/screens/controllers/CraftingScreenController.h"
