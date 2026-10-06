@@ -21,6 +21,7 @@
 #include "mc/input/MoveInputState.h"
 #include "mc/network/packet/PlayerAuthInputPacketPayload.h"
 #include "mc/world/actor/player/Player.h"
+#include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/item/ItemStackBase.h"
 
