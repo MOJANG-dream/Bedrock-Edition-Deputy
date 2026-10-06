@@ -94,7 +94,7 @@ bool wantBlock() {
 }
 
 bool holdingShield(Player& player) {
-    return isShield(player.getSelectedItem()) || isShield(player->getOffhandSlot());
+    return isShield(player.getSelectedItem()) || isShield(player.getOffhandSlot());
 }
 
 bool physicallySneaking(IClientInstance& clientInstance) {
