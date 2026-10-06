@@ -20,7 +20,7 @@
 | `F` | 游戏内交换主手与副手；背包界面悬停物品时将其送入副手 |
 | `Alt+F` | 打开/关闭图形配置界面 |
 
-配置界面也可按 `Esc` 或 `Enter`、点击「关闭」按钮关闭。
+配置界面也可按 `Esc` 或 `Enter`、点击「关闭」按钮关闭。界面内点击键位绑定行可进入捕获模式，此时按任意键即可修改快捷键（纯修饰键 Esc 取消捕获）。
 
 ### 配置文件
 
@@ -28,9 +28,11 @@
 
 ```json
 {
-    "version": 3,
+    "version": 4,
     "enableSwapKey": true,
+    "swapKey": 70,
     "enableMenuKey": true,
+    "menuKey": 70,
     "prioritizeMainHand": true,
     "enableShieldRightClick": true,
     "disableShieldSneakBlock": true,
@@ -38,8 +40,10 @@
 }
 ```
 
-- `enableSwapKey`：是否启用游戏内 F 键交换主副手物品。
-- `enableMenuKey`：是否启用 Alt+F 打开图形配置界面。
+- `enableSwapKey`：是否启用交换键功能。
+- `swapKey`：交换主副手物品的键码（默认 `70`，即 F 键）。
+- `enableMenuKey`：是否启用图形配置界面。
+- `menuKey`：打开图形配置界面的键码（默认 `70`，即 F 键，需配合 Alt 使用）。
 - `prioritizeMainHand`：右键使用物品时是否优先使用主手物品。
 - `enableShieldRightClick`：是否启用盾牌右键格挡。
 - `disableShieldSneakBlock`：是否禁用蹲下格挡（仅持盾时生效，关闭后恢复原版蹲下格挡）。
