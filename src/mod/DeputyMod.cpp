@@ -22,6 +22,7 @@
 #include "mc/deps/input/Keyboard.h"
 
 #include <atomic>
+#include <fstream>
 #include <functional>
 #include <vector>
 
@@ -29,10 +30,10 @@ namespace bedrock_edition_deputy {
 
 namespace {
 
-Config                              config;
-std::atomic<bool>                   altHeld{false};
-std::atomic<bool>                   swapKeyHeld{false}; // 边沿触发：忽略长按的键盘重复事件
-std::atomic<bool>                   menuKeyHeld{false};
+Config                       config;
+std::atomic<bool>            altHeld{false};
+std::atomic<bool>            swapKeyHeld{false}; // 边沿触发：忽略长按的键盘重复事件
+std::atomic<bool>            menuKeyHeld{false};
 std::vector<ll::event::ListenerPtr> listeners;
 
 void runOnClientThread(std::function<void()> task) {
@@ -134,6 +135,14 @@ DeputyMod& DeputyMod::getInstance() {
 bool DeputyMod::load() {
     auto& logger = getSelf().getLogger();
     logger.debug("Loading...");
+
+    // 每次开启游戏都清空诊断日志，保证日志只包含本次会话。
+    {
+        std::ofstream out(getSelf().getModDir() / "offhand-debug.log", std::ios::trunc);
+        if (out) {
+            out << "== bedrock-edition-deputy offhand debug ==\n";
+        }
+    }
 
     const auto& configFilePath = getSelf().getConfigDir() / "config.json";
     if (!ll::config::loadConfig(config, configFilePath)) {

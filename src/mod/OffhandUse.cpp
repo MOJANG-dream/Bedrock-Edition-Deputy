@@ -37,7 +37,10 @@ void tickOffhandItemInUse(Player& player) {
     ItemStack const& offhandItem = offhands::getItem(player);
 
     if (!offhands::hasItem(offhandItem)
-        || !offhandItem.sameItem(itemInUse.mItem.get(), ItemStackBase::COMPARISONOPTIONS_RELEVANTUSERDATA())) {
+        || !offhandItem.sameItem(
+            itemInUse.mItem.get(),
+            ItemStackBase::COMPARISONOPTIONS_RELEVANTUSERDATA()
+        )) {
         player.stopUsingItem();
         return;
     }
@@ -55,7 +58,10 @@ void tickOffhandItemInUse(Player& player) {
         player.feed(offhandItem.getIdAux());
     }
 
-    if (component && component->mDuration != 0) {
+    if (!component || component->mDuration != 0) {
+        // 组件不存在 = 当前并没有正在进行的物品使用（不使用时该组件就不存在），
+        // 此时绝不能调用 completeUsingItem()，否则会把刚开始的副手使用立刻结束掉
+        // （表现为：盾牌刚举起就落下、钓鱼竿鱼线立刻收回、长矛蓄力留不住）。
         return;
     }
 
