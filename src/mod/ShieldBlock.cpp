@@ -50,14 +50,18 @@ void debugLog(std::string const& line) {
     }
 }
 
-// 同时打印「旧字段」与「ECS 组件」两个来源，用来确定哪一个才是权威状态。
+// 同时打印「旧字段」「ECS 组件」与 USINGITEM 标志三个来源，用来确定哪一个才是权威状态。
 std::string usingState(::Player const& player) {
     auto        component = const_cast<::Player&>(player).getEntityContext().tryGetComponent<ItemInUseComponent>();
     int const   duration  = component ? component->mDuration : -1;
     bool const  legacy    = !player.mItemInUse.get().mItem.get().isNull();
     int const   container = static_cast<int>(player.mItemInUse.get().mSlot.get().mContainerId);
+    bool const  usingFlag = SynchedActorDataAccess::getActorFlag(
+        const_cast<::Player&>(player).getEntityContext(),
+        ActorFlags::Usingitem
+    );
     return "ecsDur=" + std::to_string(duration) + " legacy=" + (legacy ? "1" : "0")
-        + " cid=" + std::to_string(container);
+        + " cid=" + std::to_string(container) + " uf=" + (usingFlag ? "1" : "0");
 }
 
 bool isShield(Item const* item) { return item != nullptr && item->mUseAnim == UseAnimation::Block; }
@@ -110,10 +114,24 @@ LL_TYPE_INSTANCE_HOOK(
     if (isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
         player.startUsingItem(item, kShieldUseDuration);
+        // 新版的 ItemInUseComponentRemoveSystem 以 USINGITEM 标志为准决定组件去留，
+        // 显式置位防止使用状态一刻即死（盾牌秒落、钓竿秒收、长矛蓄力叠加）。
+        SynchedActorDataAccess::setActorFlag(player.getEntityContext(), ActorFlags::Usingitem, true);
         debugLog(std::string("[hook] startUsingItem done ") + usingState(player));
     }
 
     return used;
+}
+
+// 追踪到底是谁结束了使用： vanilla 的「停止/完成使用」路径都会经过这两个函数。
+LL_TYPE_INSTANCE_HOOK(ShieldStopUsingTraceHook, HookPriority::Normal, Player, &Player::stopUsingItem, void) {
+    debugLog(std::string("[trace] stopUsingItem ") + usingState(*this));
+    origin();
+}
+
+LL_TYPE_INSTANCE_HOOK(ShieldCompleteUsingTraceHook, HookPriority::Normal, Player, &Player::completeUsingItem, void) {
+    debugLog(std::string("[trace] completeUsingItem ") + usingState(*this));
+    origin();
 }
 
 // 服务端：ServerPlayer::normalTick 原本在潜行/骑乘时置 BLOCKING。Java 版只在
@@ -148,6 +166,13 @@ LL_TYPE_INSTANCE_HOOK(
     bool const       shieldRaisedChanged = offhands::hasItem(shield) && shield.mBlockingTick.tickID != previousTick;
     bool const       blocking            = isUsingShield(*this);
 
+    // 使用中持续维持 USINGITEM 标志，防止 ECS 的移除系统把组件收走。
+    if (blocking
+        && !SynchedActorDataAccess::getActorFlag(entity, ActorFlags::Usingitem)) {
+        debugLog(std::string("[srv] re-assert uf ") + usingState(*this));
+        SynchedActorDataAccess::setActorFlag(entity, ActorFlags::Usingitem, true);
+    }
+
     if (blocking != wasBlocking) {
         debugLog(std::string("[srv] blocking ") + (blocking ? "1" : "0") + " " + usingState(*this));
     }
@@ -165,9 +190,13 @@ LL_TYPE_INSTANCE_HOOK(
 void install() {
     debugLog(std::string("[hook] install useItem rc=") + std::to_string(ShieldUseItemHook::hook()));
     debugLog(std::string("[hook] install normalTick rc=") + std::to_string(ShieldBlockingTickHook::hook()));
+    debugLog(std::string("[hook] install stopTrace rc=") + std::to_string(ShieldStopUsingTraceHook::hook()));
+    debugLog(std::string("[hook] install completeTrace rc=") + std::to_string(ShieldCompleteUsingTraceHook::hook()));
 }
 
 void uninstall() {
+    ShieldCompleteUsingTraceHook::unhook();
+    ShieldStopUsingTraceHook::unhook();
     ShieldBlockingTickHook::unhook();
     ShieldUseItemHook::unhook();
 }

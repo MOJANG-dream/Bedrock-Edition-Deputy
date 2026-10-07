@@ -183,7 +183,9 @@ void useOffhand(LocalPlayer& player, int intent, MainhandAttempt const& attempt,
 
     offhands::HandSwapScope scope(player);
     if (scope.isSwapped()) {
-        gameMode.baseUseItem(player.getSelectedItem(), HandSlot::Mainhand);
+        bool const used = gameMode.baseUseItem(player.getSelectedItem(), HandSlot::Mainhand);
+        debugLog(std::string("[use] baseUseItem used=") + (used ? "1" : "0")
+                 + " using=" + (offhands::isUsingItem(player) ? "1" : "0"));
     }
 }
 

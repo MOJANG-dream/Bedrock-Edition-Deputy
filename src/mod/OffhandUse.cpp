@@ -13,6 +13,11 @@
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/item/ItemStackBase.h"
 
+#include <fstream>
+#include <string>
+
+#include "ll/api/mod/NativeMod.h"
+
 // 副手物品的「使用中」维持逻辑：原版 Player::normalTick 里的物品使用块只认
 // 背包选中槽，这里补一份针对副手的等价处理（含进食粒子与进食结算）。
 
@@ -21,6 +26,17 @@ namespace bedrock_edition_deputy::offhand_use {
 namespace {
 
 using SharedTypes::Legacy::UseAnimation;
+
+void debugLog(std::string const& line) {
+    auto mod = ll::mod::NativeMod::current();
+    if (!mod) {
+        return;
+    }
+    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
+    if (out) {
+        out << line << '\n';
+    }
+}
 
 // Player::normalTick 发送进食粒子的剩余时长窗口与间隔。
 constexpr int kFeedParticleDuration = 26;
@@ -41,6 +57,7 @@ void tickOffhandItemInUse(Player& player) {
             itemInUse.mItem.get(),
             ItemStackBase::COMPARISONOPTIONS_RELEVANTUSERDATA()
         )) {
+        debugLog("[use] tick stop: offhand mismatch");
         player.stopUsingItem();
         return;
     }
@@ -69,6 +86,7 @@ void tickOffhandItemInUse(Player& player) {
         player.eat(offhandItem);
     }
 
+    debugLog("[use] tick complete: duration hit 0");
     offhands::HandSwapScope scope(player);
     player.completeUsingItem();
 }
