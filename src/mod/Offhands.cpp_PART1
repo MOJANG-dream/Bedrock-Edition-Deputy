@@ -1,3 +1,0 @@
-bool hasItem(ItemStack const& stack) {
-    return !stack.isNull() && stack.mItem.get() != nullptr && stack.mCount != 0;
-}
