@@ -49,7 +49,7 @@ constexpr int kInteractIntent = 16 | 128; // Interact | FirstInteract
 constexpr int kUseIntent      = kBuildIntent | kInteractIntent;
 
 // 与 Java 版 Minecraft#startUseItem 的交互间隔一致：输入帧比游戏刻密，
-// 没有节流会让副手在一次点按里被重复使用。
+// 没有节流会让副手在极短时间内被重复触发。
 constexpr auto kOffhandActionDelay = std::chrono::milliseconds(200);
 
 // 主手这次点击做了什么，决定是否还要走副手。
@@ -63,6 +63,7 @@ struct MainhandAttempt {
 
 thread_local MainhandAttempt*                      gMainhandAttempt    = nullptr;
 thread_local bool                                  gOffhandBuildResult = false;
+thread_local bool                                  gLastHadUseIntent   = false;
 thread_local std::chrono::steady_clock::time_point gLastOffhandAction{};
 
 Player& playerOf(GameMode& gameMode) { return gameMode.mPlayer; }
@@ -72,7 +73,7 @@ bool isShieldStack(ItemStack const& stack) {
     return item != nullptr && item->mUseAnim == UseAnimation::Block;
 }
 
-// 副手动作的节流窗口。
+// 副手动作的节流窗口（兼作安全网）。
 bool offhandActionAllowed() {
     auto const now = std::chrono::steady_clock::now();
     if (now - gLastOffhandAction < kOffhandActionDelay) {
@@ -159,7 +160,15 @@ LL_STATIC_HOOK(
     ::HitResult const&      liquidHitResult
 ) {
     LocalPlayer* player = client.getLocalPlayer();
-    if (player == nullptr || (bai.mAction & kUseIntent) == 0 || offhands::HandSwapScope::isActive(*player)) {
+
+    // 副手动作只在「按下那一帧」执行一次。否则按住右键时每个输入帧都会重新使用：
+    // 钓鱼竿会立刻把刚抛出的鱼线收回、可重复使用的物品会被连点。
+    bool const hasUseIntent = (bai.mAction & kUseIntent) != 0;
+    bool const firstFrame   = (bai.mAction & 32) != 0 || (bai.mAction & 128) != 0;
+    bool const newUseClick  = hasUseIntent && (!gLastHadUseIntent || firstFrame);
+    gLastHadUseIntent       = hasUseIntent;
+
+    if (player == nullptr || !hasUseIntent || offhands::HandSwapScope::isActive(*player)) {
         return origin(client, bai, solidHitResult, liquidHitResult);
     }
 
@@ -172,7 +181,7 @@ LL_STATIC_HOOK(
     gMainhandAttempt    = nullptr;
 
     bool const mainhandConsumed = attempt.interacted || attempt.built || attempt.used || offhands::isUsingItem(*player);
-    if (wasUsingItem || mainhandConsumed || player->isSpectator()) {
+    if (wasUsingItem || mainhandConsumed || player->isSpectator() || !newUseClick) {
         return resetBai;
     }
 
@@ -318,7 +327,8 @@ void uninstall() {
     OffhandUseItemOnHook::unhook();
     OffhandBuildBlockHook::unhook();
     HandleBuildActionHook::unhook();
-    gMainhandAttempt = nullptr;
+    gMainhandAttempt  = nullptr;
+    gLastHadUseIntent = false;
 }
 
 } // namespace bedrock_edition_deputy::offhand_input
