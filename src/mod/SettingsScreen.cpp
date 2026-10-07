@@ -84,16 +84,15 @@ constexpr std::array<RowDef, 3> kRows = {{
 
 struct KeyRowDef {
     const char* label;
+    const char* prefix;
     int Config::*field;
 };
-constexpr std::array<KeyRowDef, 1> kKeyRows = {{
-    {"交换按键", &Config::swapKey},
+constexpr std::array<KeyRowDef, 2> kKeyRows = {{
+    {"交换按键", "", &Config::swapKey},
+    {"打开本界面", "Alt+", &Config::menuKey},
 }};
 
-// 打开本界面的快捷键固定为 Alt+菜单键，只读展示，不可改绑。
-constexpr size_t kInfoRows = 1;
-
-constexpr size_t kTotalRows = kRows.size() + kKeyRows.size() + kInfoRows;
+constexpr size_t kTotalRows = kRows.size() + kKeyRows.size();
 
 constexpr float kPanelW   = 210.f;
 constexpr float kHeaderH  = 18.f;
@@ -284,7 +283,7 @@ void renderPanel(BeforeUIRenderEvent& event) {
     }
 
     for (size_t i = 0; i < kKeyRows.size(); ++i) {
-        float rt       = geo.rowTop(kRows.size() + i);
+        float rt        = geo.rowTop(kRows.size() + i);
         bool  capturing = gCapturing == static_cast<int>(i);
         drawLabel(
             ctx,
@@ -294,23 +293,12 @@ void renderPanel(BeforeUIRenderEvent& event) {
             kKeyRows[i].label,
             capturing ? kAccent : kText
         );
-        drawKeyBox(ctx, geo.left + kPanelW - kPad - kKeyBoxW, rt + 2.f, keyName(cfg.*(kKeyRows[i].field)), capturing);
-    }
-
-    // 打开本界面的快捷键固定为 Alt+菜单键，只读展示。
-    {
-        float rt = geo.rowTop(kRows.size() + kKeyRows.size());
-        drawLabel(ctx, geo.left + kPad, rt + 3.f, kPanelW - kKeyBoxW - kPad * 3.f, "打开本界面", kDim);
-        fillRect(ctx, geo.left + kPanelW - kPad - kKeyBoxW, rt + 2.f, kKeyBoxW, kKeyBoxH, kOff);
-        frameRect(ctx, geo.left + kPanelW - kPad - kKeyBoxW, rt + 2.f, kKeyBoxW, kKeyBoxH, kFrame);
-        drawLabel(
+        drawKeyBox(
             ctx,
             geo.left + kPanelW - kPad - kKeyBoxW,
-            rt + 4.f,
-            kKeyBoxW,
-            "Alt+" + keyName(cfg.menuKey),
-            kText,
-            ::ui::TextAlignment::Center
+            rt + 2.f,
+            std::string(kKeyRows[i].prefix) + keyName(cfg.*(kKeyRows[i].field)),
+            capturing
         );
     }
 
