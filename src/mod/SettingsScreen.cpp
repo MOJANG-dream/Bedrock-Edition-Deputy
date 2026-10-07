@@ -387,14 +387,9 @@ LL_TYPE_INSTANCE_HOOK(
         owned = gScene.get() == this;
     }
     origin(isPopping, owned ? false : doTransitions, std::move(pushedScene));
-    if (owned && isPopping) {
-        std::lock_guard lock(gMutex);
-        gRetired = std::move(gScene); // 保到下一帧，栈可能仍在引用
-        gClient  = nullptr;
-        gSeen    = false;
-        gClosing = false;
-        gPendingClick.reset();
-    }
+    // 这里故意不释放 gScene：退场动画期间本场景仍会被渲染，一旦提前放手，
+    // 渲染取消就失效，借来的原版对话框本体就会露出来（关闭时出现多余 UI）。
+    // gScene 统一由 AfterUIRenderEvent 在「不再是栈顶」后清掉。
 }
 
 LL_TYPE_INSTANCE_HOOK(SceneBackgroundHook, HookPriority::Normal, UIScene, &UIScene::$renderGameBehind, bool) {
