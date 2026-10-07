@@ -4,6 +4,7 @@
 
 #include "ll/api/memory/Hook.h"
 
+#include "mc/client/gui/screens/ScreenContext.h"
 #include "mc/client/renderer/BaseActorRenderContext.h"
 #include "mc/client/renderer/game/ItemInHandRenderer.h"
 #include "mc/deps/core/math/Matrix.h"
