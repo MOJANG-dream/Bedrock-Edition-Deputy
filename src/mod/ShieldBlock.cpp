@@ -4,8 +4,10 @@
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
+#include "ll/api/mod/NativeMod.h"
 
 #include "mc/deps/shared_types/legacy/item/UseAnimation.h"
+#include "mc/entity/components/ItemInUseComponent.h"
 #include "mc/server/ServerPlayer.h"
 #include "mc/world/actor/ActorFlags.h"
 #include "mc/world/actor/player/Player.h"
@@ -15,6 +17,9 @@
 #include "mc/world/gamemode/SurvivalMode.h"
 #include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
+
+#include <fstream>
+#include <string>
 
 // 基岩版服务端只在「潜行」时判定格挡，且盾牌自身从不进入「使用中」状态。
 // 这里改为完全按 Java 版语义驱动：右键开始使用盾牌，服务端每刻根据
@@ -33,6 +38,27 @@ using SharedTypes::Legacy::UseAnimation;
 
 // Java 版 ShieldItem#getUseDuration（约 1 小时，等于无限）。
 constexpr int kShieldUseDuration = 72000;
+
+void debugLog(std::string const& line) {
+    auto mod = ll::mod::NativeMod::current();
+    if (!mod) {
+        return;
+    }
+    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
+    if (out) {
+        out << line << '\n';
+    }
+}
+
+// 同时打印「旧字段」与「ECS 组件」两个来源，用来确定哪一个才是权威状态。
+std::string usingState(::Player const& player) {
+    auto        component = const_cast<::Player&>(player).getEntityContext().tryGetComponent<ItemInUseComponent>();
+    int const   duration  = component ? component->mDuration : -1;
+    bool const  legacy    = !player.mItemInUse.get().mItem.get().isNull();
+    int const   container = static_cast<int>(player.mItemInUse.get().mSlot.get().mContainerId);
+    return "ecsDur=" + std::to_string(duration) + " legacy=" + (legacy ? "1" : "0")
+        + " cid=" + std::to_string(container);
+}
 
 bool isShield(Item const* item) { return item != nullptr && item->mUseAnim == UseAnimation::Block; }
 
@@ -68,15 +94,23 @@ LL_TYPE_INSTANCE_HOOK(
 ) {
     bool const used = origin(item, handSlot);
 
+    ::Player&   player = mPlayer;
+    Item const* type   = item.mItem.get();
+
+    debugLog(
+        std::string("[hook] useItem fired side=") + (player.isClientSide() ? "c" : "s")
+        + " isShield=" + (isShield(type) ? "1" : "0") + " hasItem=" + (offhands::hasItem(item) ? "1" : "0")
+        + " cd=" + std::to_string(type != nullptr && isOnCooldown(player, *type) ? 1 : 0) + " " + usingState(player)
+    );
+
     if (!modConfig().enableShieldRightClick) {
         return used;
     }
 
-    ::Player&   player = mPlayer;
-    Item const* type   = item.mItem.get();
     if (isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
         player.startUsingItem(item, kShieldUseDuration);
+        debugLog(std::string("[hook] startUsingItem done ") + usingState(player));
     }
 
     return used;
@@ -114,6 +148,10 @@ LL_TYPE_INSTANCE_HOOK(
     bool const       shieldRaisedChanged = offhands::hasItem(shield) && shield.mBlockingTick.tickID != previousTick;
     bool const       blocking            = isUsingShield(*this);
 
+    if (blocking != wasBlocking) {
+        debugLog(std::string("[srv] blocking ") + (blocking ? "1" : "0") + " " + usingState(*this));
+    }
+
     SynchedActorDataAccess::setActorFlag(
         entity,
         ActorFlags::TransitionBlocking,
@@ -125,8 +163,8 @@ LL_TYPE_INSTANCE_HOOK(
 } // namespace
 
 void install() {
-    ShieldUseItemHook::hook();
-    ShieldBlockingTickHook::hook();
+    debugLog(std::string("[hook] install useItem rc=") + std::to_string(ShieldUseItemHook::hook()));
+    debugLog(std::string("[hook] install normalTick rc=") + std::to_string(ShieldBlockingTickHook::hook()));
 }
 
 void uninstall() {

@@ -3,6 +3,7 @@
 #include "ll/api/memory/Hook.h"
 
 #include "mc/deps/shared_types/legacy/item/UseAnimation.h"
+#include "mc/entity/components/ItemInUseComponent.h"
 #include "mc/world/Container.h"
 #include "mc/world/ContainerID.h"
 #include "mc/world/SimpleContainer.h"
@@ -67,7 +68,12 @@ ItemStack const& getItem(Player& player) {
 }
 
 bool isUsingItem(Player const& player) {
-    return !player.mItemInUse.get().mItem.get().isNull();
+    if (!player.mItemInUse.get().mItem.get().isNull()) {
+        return true;
+    }
+    // 新版把「正在使用物品」迁移到了 ECS 组件，旧字段不再可靠，因此两个来源都看。
+    auto component = const_cast<Player&>(player).getEntityContext().tryGetComponent<ItemInUseComponent>();
+    return component && component->mDuration > 0;
 }
 
 bool isUsingOffhandItem(Player const& player) {
@@ -149,7 +155,7 @@ HandSwapScope::~HandSwapScope() {
 
     exchange((*mInventoryItems)[mSelectedSlot], (*mHandItems)[kHandContainerOffhandSlot]);
 
-    PlayerItemInUse& itemInUse         = mPlayer.mItemInUse.get();
+    PlayerItemInUse& itemInUse = mPlayer.mItemInUse.get();
     bool const       usingSelectedSlot = isUsingItem(mPlayer)
         && itemInUse.mSlot.get().mContainerId == ContainerID::Inventory
         && itemInUse.mSlot.get().mSlot == mSelectedSlot;
