@@ -1,5 +1,6 @@
 #include "mod/ShieldBlock.h"
 
+#include "mod/Config.h"
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
@@ -19,6 +20,10 @@
 // 服务端每刻根据「是否正在使用盾牌且未冷却」重算 BLOCKING 标志，不再伪造潜行。
 // 因此本地视角、碰撞箱、移动输入与右键交互全部保持原样。
 
+namespace bedrock_edition_deputy {
+Config& modConfig();
+}
+
 namespace bedrock_edition_deputy::shield_block {
 
 namespace {
@@ -30,17 +35,22 @@ constexpr int kShieldUseDuration = 72000;
 
 bool isShield(Item const* item) { return item != nullptr && item->mUseAnim == UseAnimation::Block; }
 
-bool isOnCooldown(Player const& player, Item const& item) {
+// 当前正在使用的物品（没有则为 nullptr）。
+Item const* inUseItem(::Player const& player) {
+    if (!offhands::isUsingItem(player)) {
+        return nullptr;
+    }
+    return player.mItemInUse.get().mItem.get().mItem.get();
+}
+
+bool isOnCooldown(::Player const& player, Item const& item) {
     return player.isItemOnCooldown(item.getCooldownCategory());
 }
 
 // Java 版 LivingEntity#isBlocking，去掉其五刻延迟
 // （Player::isBlocking 已通过 ShieldItem::EFFECTIVE_BLOCK_DELAY 施加该延迟）。
-bool isUsingShield(Player const& player) {
-    if (!offhands::isUsingItem(player)) {
-        return false;
-    }
-    Item const* item = player.mItemInUse.get().mItem.get().mItem.get();
+bool isUsingShield(::Player const& player) {
+    Item const* item = inUseItem(player);
     return isShield(item) && !isOnCooldown(player, *item);
 }
 
@@ -57,7 +67,11 @@ LL_TYPE_INSTANCE_HOOK(
 ) {
     bool const used = origin(item, handSlot);
 
-    Player&     player = mPlayer;
+    if (!modConfig().enableShieldRightClick) {
+        return used;
+    }
+
+    ::Player&   player = mPlayer;
     Item const* type   = item.mItem.get();
     if (isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
@@ -81,6 +95,19 @@ LL_TYPE_INSTANCE_HOOK(
     uint64 const   previousTick = mPrevShieldBlockingTick->tickID;
 
     origin();
+
+    auto& cfg = modConfig();
+
+    // 开关被关掉时立刻收盾，让客户端动画与服务端状态同步回落。
+    if (!cfg.enableShieldRightClick) {
+        Item const* item = inUseItem(*this);
+        if (isShield(item) && isUsingShield(*this)) {
+            stopUsingItem();
+        }
+        SynchedActorDataAccess::setActorFlag(entity, ActorFlags::TransitionBlocking, false);
+        SynchedActorDataAccess::setActorFlag(entity, ActorFlags::Blocking, false);
+        return;
+    }
 
     ItemStack const& shield              = getCurrentActiveShield();
     bool const       shieldRaisedChanged = offhands::hasItem(shield) && shield.mBlockingTick.tickID != previousTick;
