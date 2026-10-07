@@ -119,19 +119,20 @@ struct Geometry {
     }
 };
 
-std::mutex                            gMutex;
-IClientInstance*                      gClient{nullptr};
-std::shared_ptr<AbstractScene>        gScene;
-std::shared_ptr<AbstractScene>        gRetired;
-thread_local ScreenView*              tRenderView{nullptr};
-bool                                  gSeen{false};
+std::mutex                    gMutex;
+IClientInstance*              gClient{nullptr};
+std::shared_ptr<AbstractScene> gScene;
+std::shared_ptr<AbstractScene> gRetired;
+thread_local ScreenView*      tRenderView{nullptr};
+bool                          gSeen{false};
 bool                                  gClosing{false};
 std::chrono::steady_clock::time_point gOpenedAt;
-std::chrono::steady_clock::time_point gRetiredUntil;
+std::chrono::steady_clock::time_point gRetiredHardDeadline;
+bool                                  gRetiredRendered{false};
 std::optional<std::pair<float, float>> gPendingClick;
-std::function<void()>                 gSaveCallback;
-float                                 gInvScale{1.f};
-int                                   gCapturing{-1}; // 正在捕获键位的键绑定行下标（kKeyRows），-1 表示未捕获
+std::function<void()>             gSaveCallback;
+float                         gInvScale{1.f};
+int                           gCapturing{-1}; // 正在捕获键位的键绑定行下标（kKeyRows），-1 表示未捕获
 
 // ---------------------------------------------------------------------------
 // 绘制原语
@@ -188,7 +189,7 @@ void drawLabel(
 void drawSwitch(MinecraftUIRenderContext& ctx, float x, float y, bool on) {
     fillRect(ctx, x, y, kSwitchW, kSwitchH, on ? kAccentDeep : kOff);
     frameRect(ctx, x, y, kSwitchW, kSwitchH, on ? kAccent : kFrame);
-    float knob  = kSwitchH - 2.f;
+    float knob = kSwitchH - 2.f;
     float knobX = on ? x + kSwitchW - 1.f - knob : x + 1.f;
     fillRect(ctx, knobX, y + 1.f, knob, knob, on ? Rgb{1, 1, 1} : Rgb{0.82f, 0.82f, 0.83f});
 }
@@ -247,7 +248,8 @@ void drawKeyBox(MinecraftUIRenderContext& ctx, float x, float y, std::string con
 // ---------------------------------------------------------------------------
 
 bool ownsTop() {
-    return gClient && gScene && gClient->getSceneFactory().getCurrentSceneStack()->getTopScene() == gScene.get();
+    return gClient && gScene
+        && gClient->getSceneFactory().getCurrentSceneStack()->getTopScene() == gScene.get();
 }
 
 void clearLocked() {
@@ -268,17 +270,25 @@ Geometry computeGeometry(ScreenView& view) {
 void renderPanel(BeforeUIRenderEvent& event) {
     auto& ctx  = event.uiRenderContext();
     auto& view = event.screenView();
-    auto  geo  = computeGeometry(view);
+    auto geo   = computeGeometry(view);
     auto& cfg  = modConfig();
 
     fillRect(ctx, geo.left, geo.top, kPanelW, kPanelH, kPanel, 0.97f);
     frameRect(ctx, geo.left, geo.top, kPanelW, kPanelH, kFrame);
 
-    drawLabel(ctx, geo.left, geo.top + 3.f, kPanelW, "Bedrock Edition Deputy", kText, ::ui::TextAlignment::Center);
+    drawLabel(
+        ctx,
+        geo.left,
+        geo.top + 3.f,
+        kPanelW,
+        "Bedrock Edition Deputy",
+        kText,
+        ::ui::TextAlignment::Center
+    );
 
     for (size_t i = 0; i < kRows.size(); ++i) {
         float rt = geo.rowTop(i);
-        bool  on = cfg.*(kRows[i].field);
+        bool on  = cfg.*(kRows[i].field);
         drawLabel(ctx, geo.left + kPad, rt + 3.f, kPanelW - kSwitchW - kPad * 3.f, kRows[i].label, on ? kText : kDim);
         drawSwitch(ctx, geo.left + kPanelW - kPad - kSwitchW, rt + 3.f, on);
     }
@@ -305,7 +315,15 @@ void renderPanel(BeforeUIRenderEvent& event) {
 
     fillRect(ctx, geo.left + kPad, geo.footerTop(), 60.f, kFooterH - 3.f, kClose, 0.85f);
     frameRect(ctx, geo.left + kPad, geo.footerTop(), 60.f, kFooterH - 3.f, kFrame);
-    drawLabel(ctx, geo.left + kPad, geo.footerTop() + 3.f, 60.f, "关闭", kText, ::ui::TextAlignment::Center);
+    drawLabel(
+        ctx,
+        geo.left + kPad,
+        geo.footerTop() + 3.f,
+        60.f,
+        "关闭",
+        kText,
+        ::ui::TextAlignment::Center
+    );
 }
 
 void handleClick(float x, float y) {
@@ -314,7 +332,7 @@ void handleClick(float x, float y) {
     }
     // 用上一次渲染的几何（面板始终居中，尺寸固定），重建只依赖屏幕尺寸。
     // ScreenView 无法直接取到时，用标准 HUD 设计尺寸即可保持命中一致。
-    auto*    view = tRenderView;
+    auto* view = tRenderView;
     Geometry geo{0, 0};
     if (view) {
         geo = computeGeometry(*view);
@@ -358,7 +376,7 @@ LL_TYPE_INSTANCE_HOOK(
     UIScene,
     &UIScene::$render,
     void,
-    ::ScreenContext&           screenContext,
+    ::ScreenContext& screenContext,
     ::FrameRenderObject const& renderObj
 ) {
     struct Restore {
@@ -368,6 +386,9 @@ LL_TYPE_INSTANCE_HOOK(
     {
         std::lock_guard lock(gMutex);
         // 退场中的场景也要继续被取消渲染，否则借来的原版对话框会露出来。
+        if (gRetired.get() == this) {
+            gRetiredRendered = true;
+        }
         tRenderView = (gScene.get() == this || gRetired.get() == this) ? mScreenView.get() : nullptr;
     }
     origin(screenContext, renderObj);
@@ -394,13 +415,14 @@ LL_TYPE_INSTANCE_HOOK(
         // 立即交出「所有权」：输入不再被拦截、面板不再绘制，界面这次是真的关掉了。
         // 但场景本体保留一小段时间（gRetired），让退场动画期间的渲染取消继续生效，
         // 否则借来的原版对话框会露出来。
-        gRetired = std::move(gScene);
-        gClient  = nullptr;
-        gSeen    = false;
-        gClosing = false;
-        gCapturing = -1;
+        gRetired       = std::move(gScene);
+        gClient        = nullptr;
+        gSeen          = false;
+        gClosing       = false;
+        gCapturing     = -1;
         gPendingClick.reset();
-        gRetiredUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(700);
+        gRetiredRendered      = false;
+        gRetiredHardDeadline  = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     }
 }
 
@@ -494,8 +516,15 @@ void install() {
 
     gListeners.emplace_back(bus.emplaceListener<AfterUIRenderEvent>([](AfterUIRenderEvent& event) {
         std::lock_guard lock(gMutex);
-        if (gRetired && std::chrono::steady_clock::now() > gRetiredUntil) {
-            gRetired.reset();
+        // 退场场景一旦不再被渲染就释放；只要它还在渲染就一直保持取消渲染的状态，
+        // 这样借来的原版对话框不会在任何一帧露出来。10 秒硬上限兜底。
+        if (gRetired) {
+            auto const now = std::chrono::steady_clock::now();
+            if (!gRetiredRendered || now > gRetiredHardDeadline) {
+                gRetired.reset();
+            } else {
+                gRetiredRendered = false;
+            }
         }
         if (gScene && &event.uiRenderContext().mClient == gClient && !ownsTop()) {
             if (gSeen || std::chrono::steady_clock::now() - gOpenedAt > std::chrono::seconds(3)) {

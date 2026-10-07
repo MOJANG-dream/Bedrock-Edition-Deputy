@@ -4,6 +4,7 @@
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
+#include "ll/api/mod/NativeMod.h"
 
 #include "mc/client/game/ClientInputCallbacks.h"
 #include "mc/client/game/IClientInstance.h"
@@ -24,14 +25,13 @@
 #include "mc/world/phys/HitResultType.h"
 
 #include <chrono>
+#include <fstream>
 #include <memory>
+#include <string>
 
 // Java 版 Minecraft#startUseItem 的手部迭代逻辑：先试主手，主手没有消耗这次点击时，
 // 再在 HandSwapScope 内对副手重试同一套 GameMode 调用。原版该管线只认主手，因此
 // 在 ClientInputCallbacks::handleBuildAction 外面套一层。
-//
-// 注意：游戏实际使用的是 SurvivalMode 的覆写（GameMode::$xxx 在生存模式下不会被调用），
-// 因此监视主手行为的钩子必须挂在 SurvivalMode 上。
 
 namespace bedrock_edition_deputy {
 Config& modConfig();
@@ -49,7 +49,7 @@ constexpr int kInteractIntent = 16 | 128; // Interact | FirstInteract
 constexpr int kUseIntent      = kBuildIntent | kInteractIntent;
 
 // 与 Java 版 Minecraft#startUseItem 的交互间隔一致：输入帧比游戏刻密，
-// 没有节流会让副手在极短时间内被重复触发。
+// 没有节流会让副手在一次点按里被重复使用。
 constexpr auto kOffhandActionDelay = std::chrono::milliseconds(200);
 
 // 主手这次点击做了什么，决定是否还要走副手。
@@ -68,12 +68,35 @@ thread_local std::chrono::steady_clock::time_point gLastOffhandAction{};
 
 Player& playerOf(GameMode& gameMode) { return gameMode.mPlayer; }
 
+// 临时诊断：按行追加到 <模组目录>/offhand-debug.log，方便把现场交给开发者定位。
+void debugLog(std::string const& line) {
+    auto mod = ll::mod::NativeMod::current();
+    if (!mod) {
+        return;
+    }
+    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
+    if (out) {
+        out << line << '\n';
+    }
+}
+
+void resetDebugLog() {
+    auto mod = ll::mod::NativeMod::current();
+    if (!mod) {
+        return;
+    }
+    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::trunc);
+    if (out) {
+        out << "== bedrock-edition-deputy offhand debug ==\n";
+    }
+}
+
 bool isShieldStack(ItemStack const& stack) {
     Item const* item = stack.mItem.get();
     return item != nullptr && item->mUseAnim == UseAnimation::Block;
 }
 
-// 副手动作的节流窗口（兼作安全网）。
+// 副手动作的节流窗口。
 bool offhandActionAllowed() {
     auto const now = std::chrono::steady_clock::now();
     if (now - gLastOffhandAction < kOffhandActionDelay) {
@@ -84,7 +107,7 @@ bool offhandActionAllowed() {
 }
 
 // Java 版 ShieldItem#use 在手部迭代里会先于其他物品返回成功，所以举盾要排在副手重试之前。
-// 准星对着实体时原版只会走 interact，不会调用 useItem，因此这里主动补一次。
+// 准星对着实体时原版只会走 GameMode::interact，不会调用 useItem，因此这里主动补一次。
 void startShieldUseIfHeld(LocalPlayer& player, GameMode& gameMode) {
     if (offhands::isUsingItem(player)) {
         return;
@@ -92,7 +115,9 @@ void startShieldUseIfHeld(LocalPlayer& player, GameMode& gameMode) {
 
     ItemStack const& mainhand = player.getSelectedItem();
     if (isShieldStack(mainhand)) {
+        debugLog("[shield] try mainhand");
         gameMode.useItem(const_cast<ItemStack&>(mainhand), HandSlot::Mainhand);
+        debugLog(std::string("[shield] after mainhand useItem using=") + (offhands::isUsingItem(player) ? "1" : "0"));
         return;
     }
 
@@ -100,10 +125,13 @@ void startShieldUseIfHeld(LocalPlayer& player, GameMode& gameMode) {
         return;
     }
 
+    debugLog("[shield] try offhand");
     offhands::HandSwapScope scope(player);
     if (scope.isSwapped()) {
         gameMode.useItem(const_cast<ItemStack&>(player.getSelectedItem()), HandSlot::Mainhand);
     }
+    debugLog(std::string("[shield] after offhand useItem swapped=") + (scope.isSwapped() ? "1" : "0") + " using="
+             + (offhands::isUsingItem(player) ? "1" : "0"));
 }
 
 // Minecraft#startUseItem 的 OFF_HAND 轮次，走与主手相同的 GameMode 调用。
@@ -111,6 +139,8 @@ void useOffhand(LocalPlayer& player, int intent, MainhandAttempt const& attempt,
     if (!offhandActionAllowed()) {
         return;
     }
+
+    debugLog(std::string("[use] offhand branch hit=") + std::to_string(static_cast<int>(solidHitResult.mType)));
 
     GameMode& gameMode = *player.mGameMode;
 
@@ -197,6 +227,12 @@ LL_STATIC_HOOK(
     if (wasUsingItem || mainhandConsumed || player->isSpectator() || !newUseClick) {
         return resetBai;
     }
+
+    debugLog(
+        std::string("[input] new click intent=") + std::to_string(intent)
+        + " mainhandConsumed=" + std::to_string(mainhandConsumed) + " using=" + std::to_string(wasUsingItem)
+        + " shieldOn=" + std::to_string(modConfig().enableShieldRightClick ? 1 : 0)
+    );
 
     if (modConfig().enableShieldRightClick) {
         startShieldUseIfHeld(*player, *player->mGameMode);
@@ -325,6 +361,7 @@ LL_TYPE_INSTANCE_HOOK(
 } // namespace
 
 void install() {
+    resetDebugLog();
     HandleBuildActionHook::hook();
     OffhandBuildBlockHook::hook();
     OffhandUseItemOnHook::hook();
