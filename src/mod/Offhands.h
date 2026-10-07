@@ -4,6 +4,11 @@
 
 #include <vector>
 
+// 前置声明必须放在全局作用域：放在命名空间内会遮蔽同名全局类型。
+class Container;
+class ComplexInventoryTransaction;
+class Player;
+
 namespace bedrock_edition_deputy::offhands {
 
 // 手部 SimpleContainer 中副手所在槽位（0 = 主手，1 = 副手）。
@@ -15,21 +20,17 @@ inline constexpr int kOffhandContainerSlot = 0;
 // 打在副手发起的库存事务 mSlot 上的标记，服务端 handle 时据此还原。
 inline constexpr int kTransactionSlotMarker = -2;
 
-class Player;
-class Container;
-class ComplexInventoryTransaction;
-
 bool hasItem(ItemStack const& stack);
 
-ItemStack const& getItem(Player& player);
+ItemStack const& getItem(::Player& player);
 
-bool isUsingItem(Player const& player);
-bool isUsingOffhandItem(Player const& player);
+bool isUsingItem(::Player const& player);
+bool isUsingOffhandItem(::Player const& player);
 
-void setItemInUseSlotToOffhand(Player& player);
+void setItemInUseSlotToOffhand(::Player& player);
 
 // 作用域内产生的库存事务其实是关于副手的，接收端也要交换双手来处理。
-void markTransaction(ComplexInventoryTransaction& transaction);
+void markTransaction(::ComplexInventoryTransaction& transaction);
 
 // 原版所有「手持物品」路径都读写背包选中槽，把它和副手槽临时物理对调，
 // 这些路径就会作用于副手。作用域外看不到这次对调：两个槽的变更通知都被

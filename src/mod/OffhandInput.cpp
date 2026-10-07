@@ -86,10 +86,10 @@ void useOffhand(LocalPlayer& player, int intent, MainhandAttempt const& attempt,
 }
 
 // 主手轮次的入口。原版 Minecraft#handleKeybinds 在「物品使用中」时会吞掉所有攻击/使用点击。
-LL_TYPE_INSTANCE_HOOK(
+// 注意 handleBuildAction 是静态成员函数（无 this），必须用静态 hook。
+LL_STATIC_HOOK(
     HandleBuildActionHook,
     HookPriority::Normal,
-    ClientInputCallbacks,
     &ClientInputCallbacks::handleBuildAction,
     bool,
     ::IClientInstance&      client,
@@ -110,8 +110,7 @@ LL_TYPE_INSTANCE_HOOK(
     bool const resetBai = origin(client, bai, solidHitResult, liquidHitResult);
     gMainhandAttempt    = nullptr;
 
-    bool const mainhandConsumed =
-        attempt.interacted || attempt.built || attempt.used || offhands::isUsingItem(*player);
+    bool const mainhandConsumed = attempt.interacted || attempt.built || attempt.used || offhands::isUsingItem(*player);
     if (wasUsingItem || mainhandConsumed || player->isSpectator() || !offhands::hasItem(offhands::getItem(*player))) {
         return resetBai;
     }
@@ -154,9 +153,9 @@ LL_TYPE_INSTANCE_HOOK(
     GameMode,
     &GameMode::$interact,
     bool,
-    ::Actor&      entity,
-    ::Vec3 const& location,
-    ::HandSlot    handSlot
+    ::Actor&          entity,
+    ::Vec3 const&     location,
+    ::HandSlot        handSlot
 ) {
     Player& player = playerOf(*this);
 
