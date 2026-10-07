@@ -76,12 +76,9 @@ struct RowDef {
     const char* label;
     bool Config::*field;
 };
-constexpr std::array<RowDef, 6> kRows = {{
+constexpr std::array<RowDef, 3> kRows = {{
     {"交换主副手", &Config::enableSwapKey},
-    {"Alt+菜单键打开本界面", &Config::enableMenuKey},
-    {"右键优先使用主手", &Config::prioritizeMainHand},
     {"盾牌右键格挡", &Config::enableShieldRightClick},
-    {"蹲下时不举盾格挡", &Config::disableShieldSneakBlock},
     {"背包内按键放入副手", &Config::enableInventoryOffhand},
 }};
 
@@ -89,12 +86,14 @@ struct KeyRowDef {
     const char* label;
     int Config::*field;
 };
-constexpr std::array<KeyRowDef, 2> kKeyRows = {{
+constexpr std::array<KeyRowDef, 1> kKeyRows = {{
     {"交换按键", &Config::swapKey},
-    {"菜单按键", &Config::menuKey},
 }};
 
-constexpr size_t kTotalRows = kRows.size() + kKeyRows.size();
+// 打开本界面的快捷键固定为 Alt+菜单键，只读展示，不可改绑。
+constexpr size_t kInfoRows = 1;
+
+constexpr size_t kTotalRows = kRows.size() + kKeyRows.size() + kInfoRows;
 
 constexpr float kPanelW   = 210.f;
 constexpr float kHeaderH  = 18.f;
@@ -121,18 +120,18 @@ struct Geometry {
     }
 };
 
-std::mutex                    gMutex;
-IClientInstance*              gClient{nullptr};
-std::shared_ptr<AbstractScene> gScene;
-std::shared_ptr<AbstractScene> gRetired;
-thread_local ScreenView*      tRenderView{nullptr};
-bool                          gSeen{false};
-bool                          gClosing{false};
+std::mutex                            gMutex;
+IClientInstance*                      gClient{nullptr};
+std::shared_ptr<AbstractScene>        gScene;
+std::shared_ptr<AbstractScene>        gRetired;
+thread_local ScreenView*              tRenderView{nullptr};
+bool                                  gSeen{false};
+bool                                  gClosing{false};
 std::chrono::steady_clock::time_point gOpenedAt;
 std::optional<std::pair<float, float>> gPendingClick;
-std::function<void()>             gSaveCallback;
-float                         gInvScale{1.f};
-int                           gCapturing{-1}; // 正在捕获键位的键绑定行下标（kKeyRows），-1 表示未捕获
+std::function<void()>                 gSaveCallback;
+float                                 gInvScale{1.f};
+int                                   gCapturing{-1}; // 正在捕获键位的键绑定行下标（kKeyRows），-1 表示未捕获
 
 // ---------------------------------------------------------------------------
 // 绘制原语
@@ -189,7 +188,7 @@ void drawLabel(
 void drawSwitch(MinecraftUIRenderContext& ctx, float x, float y, bool on) {
     fillRect(ctx, x, y, kSwitchW, kSwitchH, on ? kAccentDeep : kOff);
     frameRect(ctx, x, y, kSwitchW, kSwitchH, on ? kAccent : kFrame);
-    float knob = kSwitchH - 2.f;
+    float knob  = kSwitchH - 2.f;
     float knobX = on ? x + kSwitchW - 1.f - knob : x + 1.f;
     fillRect(ctx, knobX, y + 1.f, knob, knob, on ? Rgb{1, 1, 1} : Rgb{0.82f, 0.82f, 0.83f});
 }
@@ -248,8 +247,7 @@ void drawKeyBox(MinecraftUIRenderContext& ctx, float x, float y, std::string con
 // ---------------------------------------------------------------------------
 
 bool ownsTop() {
-    return gClient && gScene
-        && gClient->getSceneFactory().getCurrentSceneStack()->getTopScene() == gScene.get();
+    return gClient && gScene && gClient->getSceneFactory().getCurrentSceneStack()->getTopScene() == gScene.get();
 }
 
 void clearLocked() {
@@ -270,47 +268,55 @@ Geometry computeGeometry(ScreenView& view) {
 void renderPanel(BeforeUIRenderEvent& event) {
     auto& ctx  = event.uiRenderContext();
     auto& view = event.screenView();
-    auto geo   = computeGeometry(view);
+    auto  geo  = computeGeometry(view);
     auto& cfg  = modConfig();
 
     fillRect(ctx, geo.left, geo.top, kPanelW, kPanelH, kPanel, 0.97f);
     frameRect(ctx, geo.left, geo.top, kPanelW, kPanelH, kFrame);
 
-    drawLabel(
-        ctx,
-        geo.left,
-        geo.top + 3.f,
-        kPanelW,
-        "Bedrock Edition Deputy",
-        kText,
-        ::ui::TextAlignment::Center
-    );
+    drawLabel(ctx, geo.left, geo.top + 3.f, kPanelW, "Bedrock Edition Deputy", kText, ::ui::TextAlignment::Center);
 
     for (size_t i = 0; i < kRows.size(); ++i) {
         float rt = geo.rowTop(i);
-        bool on  = cfg.*(kRows[i].field);
+        bool  on = cfg.*(kRows[i].field);
         drawLabel(ctx, geo.left + kPad, rt + 3.f, kPanelW - kSwitchW - kPad * 3.f, kRows[i].label, on ? kText : kDim);
         drawSwitch(ctx, geo.left + kPanelW - kPad - kSwitchW, rt + 3.f, on);
     }
 
     for (size_t i = 0; i < kKeyRows.size(); ++i) {
-        float rt        = geo.rowTop(kRows.size() + i);
-        bool capturing  = gCapturing == static_cast<int>(i);
-        drawLabel(ctx, geo.left + kPad, rt + 3.f, kPanelW - kKeyBoxW - kPad * 3.f, kKeyRows[i].label, capturing ? kAccent : kText);
+        float rt       = geo.rowTop(kRows.size() + i);
+        bool  capturing = gCapturing == static_cast<int>(i);
+        drawLabel(
+            ctx,
+            geo.left + kPad,
+            rt + 3.f,
+            kPanelW - kKeyBoxW - kPad * 3.f,
+            kKeyRows[i].label,
+            capturing ? kAccent : kText
+        );
         drawKeyBox(ctx, geo.left + kPanelW - kPad - kKeyBoxW, rt + 2.f, keyName(cfg.*(kKeyRows[i].field)), capturing);
+    }
+
+    // 打开本界面的快捷键固定为 Alt+菜单键，只读展示。
+    {
+        float rt = geo.rowTop(kRows.size() + kKeyRows.size());
+        drawLabel(ctx, geo.left + kPad, rt + 3.f, kPanelW - kKeyBoxW - kPad * 3.f, "打开本界面", kDim);
+        fillRect(ctx, geo.left + kPanelW - kPad - kKeyBoxW, rt + 2.f, kKeyBoxW, kKeyBoxH, kOff);
+        frameRect(ctx, geo.left + kPanelW - kPad - kKeyBoxW, rt + 2.f, kKeyBoxW, kKeyBoxH, kFrame);
+        drawLabel(
+            ctx,
+            geo.left + kPanelW - kPad - kKeyBoxW,
+            rt + 4.f,
+            kKeyBoxW,
+            "Alt+" + keyName(cfg.menuKey),
+            kText,
+            ::ui::TextAlignment::Center
+        );
     }
 
     fillRect(ctx, geo.left + kPad, geo.footerTop(), 60.f, kFooterH - 3.f, kClose, 0.85f);
     frameRect(ctx, geo.left + kPad, geo.footerTop(), 60.f, kFooterH - 3.f, kFrame);
-    drawLabel(
-        ctx,
-        geo.left + kPad,
-        geo.footerTop() + 3.f,
-        60.f,
-        "关闭",
-        kText,
-        ::ui::TextAlignment::Center
-    );
+    drawLabel(ctx, geo.left + kPad, geo.footerTop() + 3.f, 60.f, "关闭", kText, ::ui::TextAlignment::Center);
 }
 
 void handleClick(float x, float y) {
@@ -319,7 +325,7 @@ void handleClick(float x, float y) {
     }
     // 用上一次渲染的几何（面板始终居中，尺寸固定），重建只依赖屏幕尺寸。
     // ScreenView 无法直接取到时，用标准 HUD 设计尺寸即可保持命中一致。
-    auto* view = tRenderView;
+    auto*    view = tRenderView;
     Geometry geo{0, 0};
     if (view) {
         geo = computeGeometry(*view);
@@ -363,7 +369,7 @@ LL_TYPE_INSTANCE_HOOK(
     UIScene,
     &UIScene::$render,
     void,
-    ::ScreenContext& screenContext,
+    ::ScreenContext&           screenContext,
     ::FrameRenderObject const& renderObj
 ) {
     struct Restore {
@@ -383,8 +389,8 @@ LL_TYPE_INSTANCE_HOOK(
     UIScene,
     &UIScene::$onScreenExit,
     void,
-    bool                              isPopping,
-    bool                              doTransitions,
+    bool                             isPopping,
+    bool                             doTransitions,
     std::shared_ptr<::AbstractScene> pushedScene
 ) {
     bool owned;
