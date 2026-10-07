@@ -2,22 +2,23 @@
 
 #include "mod/Config.h"
 #include "mod/InventoryActions.h"
+#include "mod/OffhandInput.h"
+#include "mod/OffhandSync.h"
+#include "mod/OffhandUse.h"
+#include "mod/Offhands.h"
 #include "mod/SettingsScreen.h"
 #include "mod/ShieldBlock.h"
 
 #include "ll/api/Config.h"
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/input/KeyInputEvent.h"
-#include "ll/api/event/input/MouseInputEvent.h"
 #include "ll/api/io/Logger.h"
 #include "ll/api/mod/RegisterHelper.h"
 #include "ll/api/service/TargetedBedrock.h"
 #include "ll/api/thread/ClientThreadExecutor.h"
 
 #include "mc/client/game/ClientInstance.h"
-#include "mc/client/player/LocalPlayer.h"
 #include "mc/deps/input/Keyboard.h"
-#include "mc/deps/input/MouseAction.h"
 
 #include <atomic>
 #include <functional>
@@ -27,10 +28,10 @@ namespace bedrock_edition_deputy {
 
 namespace {
 
-Config                       config;
-std::atomic<bool>            altHeld{false};
-std::atomic<bool>            swapKeyHeld{false}; // 边沿触发：忽略长按的键盘重复事件
-std::atomic<bool>            menuKeyHeld{false};
+Config                              config;
+std::atomic<bool>                   altHeld{false};
+std::atomic<bool>                   swapKeyHeld{false}; // 边沿触发：忽略长按的键盘重复事件
+std::atomic<bool>                   menuKeyHeld{false};
 std::vector<ll::event::ListenerPtr> listeners;
 
 void runOnClientThread(std::function<void()> task) {
@@ -75,8 +76,8 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
         return;
     }
 
-    // Alt+菜单键：打开/关闭配置界面
-    if (isMenuKey && config.enableMenuKey && altHeld.load(std::memory_order_relaxed)) {
+    // Alt+菜单键：打开/关闭配置界面（快捷键固定，不可改绑）
+    if (isMenuKey && altHeld.load(std::memory_order_relaxed)) {
         if (menuKeyHeld.exchange(true, std::memory_order_relaxed)) {
             return; // 长按重复
         }
@@ -120,12 +121,6 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
     }
 }
 
-static void onMouse(ll::event::input::MouseInputEvent& event) {
-    if (event.actionButtonId() == MouseAction::ActionRight) {
-        shield_block::setRightHeld(event.buttonData() == MouseAction::DataDown);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 模组生命周期
 // ---------------------------------------------------------------------------
@@ -154,8 +149,14 @@ bool DeputyMod::enable() {
     auto& logger = getSelf().getLogger();
     logger.debug("Enabling...");
 
-    inventory_actions::install();
+    // 顺序：先装物品注册/双手交换基础设施，再装依赖它的使用管线与同步，
+    // 最后装与它们协作的格挡与库存操作。
+    offhands::install();
+    offhand_sync::install();
+    offhand_use::install();
+    offhand_input::install();
     shield_block::install();
+    inventory_actions::install();
     settings_screen::setSaveCallback([this] {
         const auto& configFilePath = getSelf().getConfigDir() / "config.json";
         if (!ll::config::saveConfig(config, configFilePath)) {
@@ -166,7 +167,6 @@ bool DeputyMod::enable() {
 
     auto& bus = ll::event::EventBus::getInstance();
     listeners.emplace_back(bus.emplaceListener<ll::event::input::KeyInputEvent>(onKey));
-    listeners.emplace_back(bus.emplaceListener<ll::event::input::MouseInputEvent>(onMouse));
 
     return true;
 }
@@ -183,8 +183,12 @@ bool DeputyMod::disable() {
 
     settings_screen::uninstall();
     settings_screen::setSaveCallback(nullptr);
-    shield_block::uninstall();
     inventory_actions::uninstall();
+    shield_block::uninstall();
+    offhand_input::uninstall();
+    offhand_use::uninstall();
+    offhand_sync::uninstall();
+    offhands::uninstall();
     altHeld.store(false, std::memory_order_relaxed);
     swapKeyHeld.store(false, std::memory_order_relaxed);
     menuKeyHeld.store(false, std::memory_order_relaxed);
