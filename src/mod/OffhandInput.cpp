@@ -14,6 +14,7 @@
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/gamemode/GameMode.h"
 #include "mc/world/gamemode/InteractionResult.h"
+#include "mc/world/gamemode/SurvivalMode.h"
 #include "mc/world/inventory/transaction/ComplexInventoryTransaction.h"
 #include "mc/world/item/HandSlot.h"
 #include "mc/world/item/Item.h"
@@ -28,6 +29,9 @@
 // Java 版 Minecraft#startUseItem 的手部迭代逻辑：先试主手，主手没有消耗这次点击时，
 // 再在 HandSwapScope 内对副手重试同一套 GameMode 调用。原版该管线只认主手，因此
 // 在 ClientInputCallbacks::handleBuildAction 外面套一层。
+//
+// 注意：游戏实际使用的是 SurvivalMode 的覆写（GameMode::$xxx 在生存模式下不会被调用），
+// 因此监视主手行为的钩子必须挂在 SurvivalMode 上。
 
 namespace bedrock_edition_deputy {
 Config& modConfig();
@@ -79,7 +83,7 @@ bool offhandActionAllowed() {
 }
 
 // Java 版 ShieldItem#use 在手部迭代里会先于其他物品返回成功，所以举盾要排在副手重试之前。
-// 准星对着实体时原版只会走 GameMode::interact，不会调用 useItem，因此这里主动补一次。
+// 准星对着实体时原版只会走 interact，不会调用 useItem，因此这里主动补一次。
 void startShieldUseIfHeld(LocalPlayer& player, GameMode& gameMode) {
     if (offhands::isUsingItem(player)) {
         return;
@@ -188,11 +192,12 @@ LL_STATIC_HOOK(
 }
 
 // 记录主手是否放置了方块；副手轮次里则回填结果。
+// 注意：生存模式下真正被调用的是 SurvivalMode 的覆写，必须挂派生类的 thunk。
 LL_TYPE_INSTANCE_HOOK(
     OffhandBuildBlockHook,
     HookPriority::Normal,
-    GameMode,
-    &GameMode::$buildBlock,
+    SurvivalMode,
+    &SurvivalMode::$buildBlock,
     bool,
     ::BlockPos const& pos,
     uchar             face,
@@ -219,8 +224,8 @@ LL_TYPE_INSTANCE_HOOK(
 LL_TYPE_INSTANCE_HOOK(
     OffhandUseItemOnHook,
     HookPriority::Normal,
-    GameMode,
-    &GameMode::$useItemOn,
+    SurvivalMode,
+    &SurvivalMode::$useItemOn,
     ::InteractionResult,
     ::ItemStack&      item,
     ::BlockPos const& at,
@@ -243,8 +248,8 @@ LL_TYPE_INSTANCE_HOOK(
 LL_TYPE_INSTANCE_HOOK(
     OffhandInteractHook,
     HookPriority::Normal,
-    GameMode,
-    &GameMode::$interact,
+    SurvivalMode,
+    &SurvivalMode::$interact,
     bool,
     ::Actor&      entity,
     ::Vec3 const& location,

@@ -12,12 +12,13 @@
 #include "mc/world/actor/player/PlayerItemInUse.h"
 #include "mc/world/actor/provider/SynchedActorDataAccess.h"
 #include "mc/world/gamemode/GameMode.h"
+#include "mc/world/gamemode/SurvivalMode.h"
 #include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
 
 // 基岩版服务端只在「潜行」时判定格挡，且盾牌自身从不进入「使用中」状态。
-// 这里改为完全按 Java 版语义驱动：右键（GameMode::useItem）开始使用盾牌，
-// 服务端每刻根据「是否正在使用盾牌且未冷却」重算 BLOCKING 标志，不再伪造潜行。
+// 这里改为完全按 Java 版语义驱动：右键开始使用盾牌，服务端每刻根据
+// 「是否正在使用盾牌且未冷却」重算 BLOCKING 标志，不再伪造潜行。
 // 因此本地视角、碰撞箱、移动输入与右键交互全部保持原样。
 
 namespace bedrock_edition_deputy {
@@ -54,13 +55,13 @@ bool isUsingShield(::Player const& player) {
     return isShield(item) && !isOnCooldown(player, *item);
 }
 
-// 双端：客户端经 GameMode::baseUseItem 走到这里，服务端经使用事务走到这里。
-// Java 版 ShieldItem#use 会从任意一手开始使用盾牌；基岩版 ShieldItem::use 不做任何事。
+// 双端：客户端经使用输入、服务端经使用事务都会走到这里。
+// 注意：实际生效的是 SurvivalMode 的覆写，挂 GameMode::$useItem 生存模式下永远不会被调用。
 LL_TYPE_INSTANCE_HOOK(
     ShieldUseItemHook,
     HookPriority::Normal,
-    GameMode,
-    &GameMode::$useItem,
+    SurvivalMode,
+    &SurvivalMode::$useItem,
     bool,
     ::ItemStack& item,
     ::HandSlot   handSlot
