@@ -127,6 +127,7 @@ thread_local ScreenView*              tRenderView{nullptr};
 bool                                  gSeen{false};
 bool                                  gClosing{false};
 std::chrono::steady_clock::time_point gOpenedAt;
+std::chrono::steady_clock::time_point gRetiredUntil;
 std::optional<std::pair<float, float>> gPendingClick;
 std::function<void()>                 gSaveCallback;
 float                                 gInvScale{1.f};
@@ -366,7 +367,8 @@ LL_TYPE_INSTANCE_HOOK(
     } restore{tRenderView};
     {
         std::lock_guard lock(gMutex);
-        tRenderView = gScene.get() == this ? mScreenView.get() : nullptr;
+        // 退场中的场景也要继续被取消渲染，否则借来的原版对话框会露出来。
+        tRenderView = (gScene.get() == this || gRetired.get() == this) ? mScreenView.get() : nullptr;
     }
     origin(screenContext, renderObj);
 }
@@ -387,9 +389,19 @@ LL_TYPE_INSTANCE_HOOK(
         owned = gScene.get() == this;
     }
     origin(isPopping, owned ? false : doTransitions, std::move(pushedScene));
-    // 这里故意不释放 gScene：退场动画期间本场景仍会被渲染，一旦提前放手，
-    // 渲染取消就失效，借来的原版对话框本体就会露出来（关闭时出现多余 UI）。
-    // gScene 统一由 AfterUIRenderEvent 在「不再是栈顶」后清掉。
+    if (owned && isPopping) {
+        std::lock_guard lock(gMutex);
+        // 立即交出「所有权」：输入不再被拦截、面板不再绘制，界面这次是真的关掉了。
+        // 但场景本体保留一小段时间（gRetired），让退场动画期间的渲染取消继续生效，
+        // 否则借来的原版对话框会露出来。
+        gRetired = std::move(gScene);
+        gClient  = nullptr;
+        gSeen    = false;
+        gClosing = false;
+        gCapturing = -1;
+        gPendingClick.reset();
+        gRetiredUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(700);
+    }
 }
 
 LL_TYPE_INSTANCE_HOOK(SceneBackgroundHook, HookPriority::Normal, UIScene, &UIScene::$renderGameBehind, bool) {
@@ -482,7 +494,9 @@ void install() {
 
     gListeners.emplace_back(bus.emplaceListener<AfterUIRenderEvent>([](AfterUIRenderEvent& event) {
         std::lock_guard lock(gMutex);
-        gRetired.reset();
+        if (gRetired && std::chrono::steady_clock::now() > gRetiredUntil) {
+            gRetired.reset();
+        }
         if (gScene && &event.uiRenderContext().mClient == gClient && !ownsTop()) {
             if (gSeen || std::chrono::steady_clock::now() - gOpenedAt > std::chrono::seconds(3)) {
                 clearLocked();
