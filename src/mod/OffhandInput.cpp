@@ -63,7 +63,7 @@ struct MainhandAttempt {
 
 thread_local MainhandAttempt*                      gMainhandAttempt    = nullptr;
 thread_local bool                                  gOffhandBuildResult = false;
-thread_local bool                                  gLastHadUseIntent   = false;
+thread_local std::chrono::steady_clock::time_point gLastUseIntentTime{};
 thread_local std::chrono::steady_clock::time_point gLastOffhandAction{};
 
 Player& playerOf(GameMode& gameMode) { return gameMode.mPlayer; }
@@ -115,11 +115,21 @@ void useOffhand(LocalPlayer& player, int intent, MainhandAttempt const& attempt,
     GameMode& gameMode = *player.mGameMode;
 
     if (solidHitResult.mType == HitResultType::Entity) {
+        bool interacted = false;
         if (attempt.interactTarget != nullptr) {
             offhands::HandSwapScope scope(player);
             if (scope.isSwapped()) {
-                gameMode.interact(*attempt.interactTarget, attempt.interactLocation, HandSlot::Mainhand);
+                interacted =
+                    gameMode.interact(*attempt.interactTarget, attempt.interactLocation, HandSlot::Mainhand);
             }
+        }
+        // 实体交互没成功时，副手物品仍要能使用（例如副手钓鱼竿对着生物抛出）。
+        if (interacted) {
+            return;
+        }
+        offhands::HandSwapScope scope(player);
+        if (scope.isSwapped()) {
+            gameMode.baseUseItem(player.getSelectedItem(), HandSlot::Mainhand);
         }
         return;
     }
@@ -161,12 +171,15 @@ LL_STATIC_HOOK(
 ) {
     LocalPlayer* player = client.getLocalPlayer();
 
-    // 副手动作只在「按下那一帧」执行一次。否则按住右键时每个输入帧都会重新使用：
-    // 钓鱼竿会立刻把刚抛出的鱼线收回、可重复使用的物品会被连点。
+    // 边沿检测：用「距离上一次使用意图的时间」判断是否是新的一次按下。
+    // 不能依赖 BuildActionIntention 的 First* 位——它在整段按住期间会一直置位，
+    // 会导致按住右键时每帧都重新使用（钓鱼竿鱼线立刻被收回、物品被连点）。
+    auto const now          = std::chrono::steady_clock::now();
     bool const hasUseIntent = (bai.mAction & kUseIntent) != 0;
-    bool const firstFrame   = (bai.mAction & 32) != 0 || (bai.mAction & 128) != 0;
-    bool const newUseClick  = hasUseIntent && (!gLastHadUseIntent || firstFrame);
-    gLastHadUseIntent       = hasUseIntent;
+    bool const newUseClick  = hasUseIntent && (now - gLastUseIntentTime > kOffhandActionDelay);
+    if (hasUseIntent) {
+        gLastUseIntentTime = now;
+    }
 
     if (player == nullptr || !hasUseIntent || offhands::HandSwapScope::isActive(*player)) {
         return origin(client, bai, solidHitResult, liquidHitResult);
@@ -327,8 +340,8 @@ void uninstall() {
     OffhandUseItemOnHook::unhook();
     OffhandBuildBlockHook::unhook();
     HandleBuildActionHook::unhook();
-    gMainhandAttempt  = nullptr;
-    gLastHadUseIntent = false;
+    gMainhandAttempt   = nullptr;
+    gLastUseIntentTime = {};
 }
 
 } // namespace bedrock_edition_deputy::offhand_input
