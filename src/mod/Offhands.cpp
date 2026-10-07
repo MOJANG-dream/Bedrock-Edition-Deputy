@@ -59,7 +59,7 @@ LL_TYPE_INSTANCE_HOOK(
 } // namespace
 
 bool hasItem(ItemStack const& stack) {
-    return !stack.isNull() && stack.getItem() != nullptr && stack.mCount != 0;
+    return !stack.isNull() && stack.mItem.get() != nullptr && stack.mCount != 0;
 }
 
 ItemStack const& getItem(Player& player) {

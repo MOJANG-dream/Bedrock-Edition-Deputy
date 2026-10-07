@@ -46,9 +46,9 @@ void tickOffhandItemInUse(Player& player) {
         itemInUse.mItem.get() = offhandItem;
     }
 
-    bool const  clientSide = player.isClientSide();
-    auto        component  = player.getEntityContext().tryGetComponent<ItemInUseComponent>();
-    Item const* item       = offhandItem.getItem();
+    bool const clientSide = player.isClientSide();
+    auto       component  = player.getEntityContext().tryGetComponent<ItemInUseComponent>();
+    Item const* item      = offhandItem.mItem.get();
 
     if (clientSide && component && component->mDuration < kFeedParticleDuration
         && component->mDuration % kFeedParticleInterval == 0 && hasFeedingAnimation(item->mUseAnim)) {

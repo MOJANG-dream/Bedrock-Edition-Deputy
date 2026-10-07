@@ -40,7 +40,7 @@ bool isUsingShield(Player const& player) {
     if (!offhands::isUsingItem(player)) {
         return false;
     }
-    Item const* item = player.mItemInUse.get().mItem.get().getItem();
+    Item const* item = player.mItemInUse.get().mItem.get().mItem.get();
     return isShield(item) && !isOnCooldown(player, *item);
 }
 
@@ -58,7 +58,7 @@ LL_TYPE_INSTANCE_HOOK(
     bool const used = origin(item, handSlot);
 
     Player&     player = mPlayer;
-    Item const* type   = item.getItem();
+    Item const* type   = item.mItem.get();
     if (isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
         player.startUsingItem(item, kShieldUseDuration);
