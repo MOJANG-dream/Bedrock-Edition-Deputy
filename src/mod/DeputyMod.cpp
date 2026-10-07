@@ -3,6 +3,7 @@
 #include "mod/Config.h"
 #include "mod/InventoryActions.h"
 #include "mod/OffhandInput.h"
+#include "mod/OffhandRender.h"
 #include "mod/OffhandSync.h"
 #include "mod/OffhandUse.h"
 #include "mod/Offhands.h"
@@ -155,6 +156,7 @@ bool DeputyMod::enable() {
     offhand_sync::install();
     offhand_use::install();
     offhand_input::install();
+    offhand_render::install();
     shield_block::install();
     inventory_actions::install();
     settings_screen::setSaveCallback([this] {
@@ -185,6 +187,7 @@ bool DeputyMod::disable() {
     settings_screen::setSaveCallback(nullptr);
     inventory_actions::uninstall();
     shield_block::uninstall();
+    offhand_render::uninstall();
     offhand_input::uninstall();
     offhand_use::uninstall();
     offhand_sync::uninstall();
