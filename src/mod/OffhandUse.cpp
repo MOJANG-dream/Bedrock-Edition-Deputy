@@ -3,9 +3,13 @@
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
+#include "ll/api/mod/NativeMod.h"
 
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/gamemode/GameMode.h"
+
+#include <fstream>
+#include <string>
 
 // 副手物品的「使用中」维持逻辑：原版 Player::normalTick 里的物品使用块只认
 // 背包选中槽。用 HandSwapScope 把副手物品临时换到选中槽，让 normalTick 原生
@@ -14,6 +18,17 @@
 namespace bedrock_edition_deputy::offhand_use {
 
 namespace {
+
+void debugLog(std::string const& line) {
+    auto mod = ll::mod::NativeMod::current();
+    if (!mod) {
+        return;
+    }
+    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
+    if (out) {
+        out << line << '\n';
+    }
+}
 
 LL_TYPE_INSTANCE_HOOK(
     OffhandItemTickHook,
@@ -47,6 +62,7 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
 
+    debugLog(std::string("[use] releaseUsingItem side=") + (player.isClientSide() ? "c" : "s"));
     offhands::HandSwapScope scope(player);
     origin();
 }
