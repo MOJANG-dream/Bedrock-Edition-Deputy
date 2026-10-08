@@ -69,6 +69,18 @@ std::string usingState(::Player const& player) {
 
 bool isShield(Item const* item) { return item != nullptr && item->mUseAnim == UseAnimation::Block; }
 
+std::string itemName(Item const* item) {
+    return item != nullptr ? item->mFullName.getString() : std::string("-");
+}
+
+std::string itemProps(Item const* item) {
+    if (item == nullptr) {
+        return " anim=- maxDur=-";
+    }
+    return " anim=" + std::to_string(static_cast<int>(item->mUseAnim))
+        + " maxDur=" + std::to_string(item->mMaxUseDuration);
+}
+
 // 当前正在使用的物品（没有则为 nullptr）。
 Item const* inUseItem(::Player const& player) {
     if (!offhands::isUsingItem(player)) {
@@ -99,14 +111,17 @@ LL_TYPE_INSTANCE_HOOK(
     ::ItemStack& item,
     ::HandSlot   handSlot
 ) {
-    bool const used = origin(item, handSlot);
+    ::Player&   player   = mPlayer;
+    Item const* type     = item.mItem.get();
+    bool const  wasUsing = offhands::isUsingItem(player);
 
-    ::Player&   player = mPlayer;
-    Item const* type   = item.mItem.get();
+    bool const used = origin(item, handSlot);
 
     debugLog(
         std::string("[hook] useItem fired side=") + (player.isClientSide() ? "c" : "s")
+        + " item=" + itemName(type) + itemProps(type)
         + " isShield=" + (isShield(type) ? "1" : "0") + " hasItem=" + (offhands::hasItem(item) ? "1" : "0")
+        + " wasUsing=" + (wasUsing ? "1" : "0")
         + " cd=" + std::to_string(type != nullptr && isOnCooldown(player, *type) ? 1 : 0) + " " + usingState(player)
     );
 
@@ -114,7 +129,9 @@ LL_TYPE_INSTANCE_HOOK(
         return used;
     }
 
-    if (isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
+    // 服务端使用中每刻会自动调 useItem。wasUsing 为真说明这次调用发生在使用期间，
+    // 若 origin 把使用掐掉了也不能重启——否则快速点击时盾牌会反复闪起（僵尸重启循环）。
+    if (!wasUsing && isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
         player.startUsingItem(item, kShieldUseDuration);
         debugLog(std::string("[hook] startUsingItem done ") + usingState(player));
@@ -137,21 +154,22 @@ LL_TYPE_INSTANCE_HOOK(
     ::ItemStack const& item,
     ::HandSlot         handSlot
 ) {
+    ::Player&   player   = mPlayer;
+    Item const* type     = item.mItem.get();
+    bool const  wasUsing = offhands::isUsingItem(player);
+
     bool const used = origin(item, handSlot);
 
     if (!modConfig().enableShieldRightClick) {
         return used;
     }
 
-    ::Player&   player = mPlayer;
-    Item const* type   = item.mItem.get();
-
-    if (isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
+    if (!wasUsing && isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
         player.startUsingItem(item, kShieldUseDuration);
         debugLog(
             std::string("[hook] baseUseItem startUsingItem side=") + (player.isClientSide() ? "c" : "s")
-            + " " + usingState(player)
+            + " item=" + itemName(type) + " " + usingState(player)
         );
     }
 
@@ -181,6 +199,20 @@ LL_TYPE_INSTANCE_HOOK(
         debugLog(std::string("[shield] cooldown started, stopUsingItem ") + usingState(*this));
         this->stopUsingItem();
     }
+}
+
+// 诊断：追踪谁在停止使用，定位「快速点击后使用被掐掉」的凶手。
+LL_TYPE_INSTANCE_HOOK(
+    ShieldStopUsingHook,
+    HookPriority::Normal,
+    Player,
+    &Player::stopUsingItem,
+    void
+) {
+    if (offhands::isUsingItem(*this)) {
+        debugLog(std::string("[hook] stopUsingItem ") + usingState(*this));
+    }
+    origin();
 }
 
 // 服务端：ServerPlayer::normalTick 原本在潜行/骑乘时置 BLOCKING。Java 版只在
@@ -237,9 +269,11 @@ void install() {
     debugLog(std::string("[hook] install baseUseItem rc=") + std::to_string(ShieldBaseUseItemHook::hook()));
     debugLog(std::string("[hook] install normalTick rc=") + std::to_string(ShieldBlockingTickHook::hook()));
     debugLog(std::string("[hook] install cooldown rc=") + std::to_string(ShieldStartCooldownHook::hook()));
+    debugLog(std::string("[hook] install stopUsing rc=") + std::to_string(ShieldStopUsingHook::hook()));
 }
 
 void uninstall() {
+    ShieldStopUsingHook::unhook();
     ShieldStartCooldownHook::unhook();
     ShieldBlockingTickHook::unhook();
     ShieldBaseUseItemHook::unhook();
