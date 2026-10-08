@@ -68,12 +68,9 @@ ItemStack const& getItem(Player& player) {
 }
 
 bool isUsingItem(Player const& player) {
-    if (!player.mItemInUse.get().mItem.get().isNull()) {
-        return true;
-    }
-    // 新版把「正在使用物品」迁移到了 ECS 组件，旧字段不再可靠，因此两个来源都看。
-    auto component = const_cast<Player&>(player).getEntityContext().tryGetComponent<ItemInUseComponent>();
-    return component && component->mDuration > 0;
+    // 参考模组只查旧字段：startUsingItem 设置它，stopUsingItem 清空它。
+    // ECS ItemInUseComponent 由 ItemInUseComponentRemoveSystem 异步管理，不可靠。
+    return !player.mItemInUse.get().mItem.get().isNull();
 }
 
 bool isUsingOffhandItem(Player const& player) {
