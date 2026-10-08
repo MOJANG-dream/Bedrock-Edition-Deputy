@@ -1,6 +1,7 @@
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
+#include "ll/api/mod/NativeMod.h"
 
 #include "mc/deps/shared_types/legacy/item/UseAnimation.h"
 #include "mc/entity/components/ItemInUseComponent.h"
@@ -20,6 +21,8 @@
 #include "mc/world/item/Item.h"
 #include "mc/world/item/registry/ItemRegistry.h"
 
+#include <fstream>
+#include <string>
 #include <vector>
 
 namespace bedrock_edition_deputy::offhands {
@@ -28,6 +31,17 @@ namespace {
 
 // 不同玩家的作用域可以嵌套，因此每次查询都沿链条上溯。
 thread_local HandSwapScope* gActiveScope = nullptr;
+
+void debugLog(std::string const& line) {
+    auto mod = ll::mod::NativeMod::current();
+    if (!mod) {
+        return;
+    }
+    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
+    if (out) {
+        out << line << '\n';
+    }
+}
 
 void exchange(ItemStack& lhs, ItemStack& rhs) {
     ItemStack temporary = lhs;
@@ -56,6 +70,14 @@ LL_TYPE_INSTANCE_HOOK(
              || item->mUseAnim == ::SharedTypes::Legacy::UseAnimation::Spear)
             && item->mMaxUseDuration == 0) {
             item->mMaxUseDuration = 72000;
+        }
+        // 诊断：转储所有带使用动画的物品，确认新版「矛」的动画值与蓄力时长。
+        if (item->mUseAnim != ::SharedTypes::Legacy::UseAnimation::None) {
+            debugLog(
+                std::string("[reg] item=") + item->mFullName.getString()
+                + " anim=" + std::to_string(static_cast<int>(item->mUseAnim))
+                + " maxDur=" + std::to_string(item->mMaxUseDuration)
+            );
         }
     }
 }
