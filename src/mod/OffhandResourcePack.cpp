@@ -39,7 +39,8 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
 
-    auto& fullStack = mFullStack.get();
+    // TypedStorage<8,8,unique_ptr<T>> 直接退化为 unique_ptr<T>，get() 按值返回裸指针。
+    ResourcePackStack* fullStack = mFullStack.get();
     if (!fullStack) {
         return;
     }

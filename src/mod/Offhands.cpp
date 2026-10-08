@@ -20,10 +20,17 @@
 #include "mc/world/inventory/transaction/ItemUseOnActorInventoryTransaction.h"
 #include "mc/world/item/Item.h"
 #include "mc/world/item/registry/ItemRegistry.h"
+#include "mc/world/item/registry/ItemRegistryRef.h"
 
 #include <fstream>
 #include <string>
 #include <vector>
+
+// 全局作用域前向声明：buildServerRegistry 钩子的参数类型（放进命名空间会变成不同类型）。
+class BaseGameVersion;
+class IMinecraftEventing;
+class LinkedAssetValidator;
+class ResourcePackManager;
 
 namespace bedrock_edition_deputy::offhands {
 
@@ -49,17 +56,9 @@ void exchange(ItemStack& lhs, ItemStack& rhs) {
     rhs                 = temporary;
 }
 
-// 物品注册结束（双端各一次）后把所有物品的 mAllowOffhand 打开：Java 版副手可放任何物品。
-LL_TYPE_INSTANCE_HOOK(
-    AllowAllOffhandHook,
-    HookPriority::Normal,
-    ItemRegistry,
-    &ItemRegistry::finishedRegistration,
-    void,
-    ::Experiments const& experiments
-) {
-    origin(experiments);
-    for (auto const& item : mItemRegistry.get()) {
+// 物品注册结束后把所有物品的 mAllowOffhand 打开：Java 版副手可放任何物品。
+void applyOffhandFlags(ItemRegistry& registry) {
+    for (auto const& item : registry.mItemRegistry.get()) {
         if (!item) {
             continue;
         }
@@ -79,6 +78,42 @@ LL_TYPE_INSTANCE_HOOK(
                 + " maxDur=" + std::to_string(item->mMaxUseDuration)
             );
         }
+    }
+}
+
+#ifdef LL_PLAT_C
+// 客户端：ItemRegistry::finishedRegistration 仅客户端导出（#ifdef LL_PLAT_C）。
+LL_TYPE_INSTANCE_HOOK(
+    AllowAllOffhandHook,
+    HookPriority::Normal,
+    ItemRegistry,
+    &ItemRegistry::finishedRegistration,
+    void,
+    ::Experiments const& experiments
+) {
+    origin(experiments);
+    applyOffhandFlags(*this);
+}
+#endif
+
+// 服务端：注册由 ItemRegistryRef::buildServerRegistry 完成（双端均导出，
+// 客户端的 IntegratedServer 也走这条路径，重复设置幂等）。
+LL_TYPE_INSTANCE_HOOK(
+    ServerBuildRegistryHook,
+    HookPriority::Normal,
+    ItemRegistryRef,
+    &ItemRegistryRef::buildServerRegistry,
+    void,
+    ::Experiments const&                               experiments,
+    ::BaseGameVersion const&                           baseGameVersion,
+    ::ResourcePackManager*                             rpm,
+    ::Bedrock::NonOwnerPointer<::LinkedAssetValidator> validator,
+    ::IMinecraftEventing&                              eventing
+) {
+    origin(experiments, baseGameVersion, rpm, validator, eventing);
+    // TypedStorage<8,16,weak_ptr<T>> 直接退化为 weak_ptr<T>。
+    if (auto registry = mWeakRegistry.lock()) {
+        applyOffhandFlags(*registry);
     }
 }
 
@@ -235,10 +270,18 @@ bool HandSwapScope::deferInventorySend(Player const& player, bool shouldSelectSl
 // 安装 / 卸载
 // ---------------------------------------------------------------------------
 
-void install() { AllowAllOffhandHook::hook(); }
+void install() {
+#ifdef LL_PLAT_C
+    AllowAllOffhandHook::hook();
+#endif
+    ServerBuildRegistryHook::hook();
+}
 
 void uninstall() {
+    ServerBuildRegistryHook::unhook();
+#ifdef LL_PLAT_C
     AllowAllOffhandHook::unhook();
+#endif
     gActiveScope = nullptr;
 }
 
