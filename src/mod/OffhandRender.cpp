@@ -99,7 +99,7 @@ LL_TYPE_INSTANCE_HOOK(
     ::Matrix const&           prevProj,
     ::ItemContextFlags        itemFlags
 ) {
-    LocalPlayer* player = mClient.get().getLocalPlayer();
+    LocalPlayer* player = mClient.getLocalPlayer();
     if (player == nullptr || !offhands::isUsingOffhandItem(*player)) {
         origin(renderContext, prevProj, itemFlags);
         return;
