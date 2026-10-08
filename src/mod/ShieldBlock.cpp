@@ -61,7 +61,8 @@ std::string usingState(::Player const& player) {
         const_cast<::Player&>(player).getEntityContext(),
         ActorFlags::Usingitem
     );
-    return "ecsDur=" + std::to_string(duration) + " legacy=" + (legacy ? "1" : "0")
+    return std::string("side=") + (player.isClientSide() ? "c" : "s")
+        + " ecsDur=" + std::to_string(duration) + " legacy=" + (legacy ? "1" : "0")
         + " cid=" + std::to_string(container) + " uf=" + (usingFlag ? "1" : "0");
 }
 
@@ -210,8 +211,12 @@ LL_TYPE_INSTANCE_HOOK(
     bool const       shieldRaisedChanged = offhands::hasItem(shield) && shield.mBlockingTick.tickID != previousTick;
     bool const       blocking            = isUsingShield(*this);
 
-    if (blocking != wasBlocking) {
-        debugLog(std::string("[srv] blocking ") + (blocking ? "1" : "0") + " " + usingState(*this));
+    // 诊断：使用中每刻都输出，确认 ServerPlayer::normalTick 是否运行、blocking 如何计算。
+    if (blocking != wasBlocking || offhands::isUsingItem(*this)) {
+        debugLog(
+            std::string("[srv] blocking=") + (blocking ? "1" : "0") + " was=" + (wasBlocking ? "1" : "0")
+            + " " + usingState(*this)
+        );
     }
 
     SynchedActorDataAccess::setActorFlag(
