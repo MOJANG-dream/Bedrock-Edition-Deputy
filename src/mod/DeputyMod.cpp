@@ -82,6 +82,15 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
     int  key  = event.keyCode();
     bool down = event.isDown();
 
+    // 诊断：记录所有 F 键与 Alt 键事件，确认输入通路与键码。
+    if (key == Keyboard::Menu || key == 0x46 /* F */) {
+        menuDebugLog(
+            std::string("[key] key=") + std::to_string(key) + " down=" + (down ? "1" : "0")
+            + " altHeld=" + (altHeld.load(std::memory_order_relaxed) ? "1" : "0")
+            + " altAsync=" + ((GetAsyncKeyState(VK_MENU) & 0x8000) ? "1" : "0")
+        );
+    }
+
     if (key == Keyboard::Menu) {
         altHeld.store(down, std::memory_order_relaxed);
         return;
