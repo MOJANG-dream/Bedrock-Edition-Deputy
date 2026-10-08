@@ -13,11 +13,6 @@
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/item/ItemStackBase.h"
 
-#include <fstream>
-#include <string>
-
-#include "ll/api/mod/NativeMod.h"
-
 // 副手物品的「使用中」维持逻辑：原版 Player::normalTick 里的物品使用块只认
 // 背包选中槽，这里补一份针对副手的等价处理（含进食粒子与进食结算）。
 
@@ -26,17 +21,6 @@ namespace bedrock_edition_deputy::offhand_use {
 namespace {
 
 using SharedTypes::Legacy::UseAnimation;
-
-void debugLog(std::string const& line) {
-    auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
-        return;
-    }
-    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
-    if (out) {
-        out << line << '\n';
-    }
-}
 
 // Player::normalTick 发送进食粒子的剩余时长窗口与间隔。
 constexpr int kFeedParticleDuration = 26;
@@ -57,7 +41,6 @@ void tickOffhandItemInUse(Player& player) {
             itemInUse.mItem.get(),
             ItemStackBase::COMPARISONOPTIONS_RELEVANTUSERDATA()
         )) {
-        debugLog("[use] tick stop: offhand mismatch");
         player.stopUsingItem();
         return;
     }
@@ -66,26 +49,18 @@ void tickOffhandItemInUse(Player& player) {
         itemInUse.mItem.get() = offhandItem;
     }
 
-    bool const clientSide = player.isClientSide();
-    auto       component  = player.getEntityContext().tryGetComponent<ItemInUseComponent>();
-    Item const* item      = offhandItem.mItem.get();
+    bool const       clientSide = player.isClientSide();
+    ItemInUseComponent const* component =
+        player.getEntityContext().tryGetComponent<ItemInUseComponent>();
+    Item const* item = offhandItem.mItem.get();
 
-    // 组件在 OffhandItemTickHook 的 HandSwapScope 内已重建，这里应存在。
-    // 若仍缺失（极端情况），直接返回，等下一帧重建。
-    if (!component) {
-        return;
-    }
-
-    if (clientSide && component->mDuration < kFeedParticleDuration
+    if (clientSide && component != nullptr && component->mDuration < kFeedParticleDuration
         && component->mDuration % kFeedParticleInterval == 0 && hasFeedingAnimation(item->mUseAnim)) {
         player.feed(offhandItem.getIdAux());
     }
 
-    if (!component || component->mDuration != 0) {
-        return;
-    }
-
-    if (item->mMaxUseDuration > 0) {
+    // 组件仍在（count-zeroing 保证 normalTick 没有清掉它）且时长未走完：等下一刻。
+    if (component != nullptr && component->mDuration != 0) {
         return;
     }
 
@@ -93,7 +68,6 @@ void tickOffhandItemInUse(Player& player) {
         player.eat(offhandItem);
     }
 
-    debugLog("[use] tick complete: duration hit 0");
     offhands::HandSwapScope scope(player);
     player.completeUsingItem();
 }
@@ -110,31 +84,22 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
 
-    {
-        offhands::HandSwapScope scope(*this);
+    // 参考模组 FrederoxDev/Offhand 的 count-zeroing 技巧：
+    // Player::normalTick 里有一段一致性检查——若「使用中物品」不在当前选中槽，就调用 stopUsingItem。
+    // 副手使用时物品在副手槽（cid=119），选中槽是主手物品，因此每次 tick 都会被清掉使用状态。
+    // 把 mItemInUse.mItem.mCount 临时置 0 可以让该检查跳过（isUsingItem 走 isNull，不看 count），
+    // origin 返回后再恢复 count，使用状态就保住了。
+    ItemStack& inUseStack = this->mItemInUse.get().mItem.get();
+    auto const count      = inUseStack.mCount;
+    inUseStack.mCount     = 0;
 
-        // 在 origin 之前重建被清掉的组件：必须在 HandSwapScope 内调用，
-        // 这样 startUsingItem 会把 mItemInUse.mSlot 设到选中槽，而选中槽此刻
-        // 物理持有副手物品——物品、槽位、组件三者一致，origin 内部的任何检查都能通过。
-        auto component = getEntityContext().tryGetComponent<ItemInUseComponent>();
-        if (!component) {
-            ItemStack const& offhandItem = offhands::getItem(*this);
-            Item const*      item        = offhandItem.mItem.get();
-            int              duration    = item ? item->mMaxUseDuration : 0;
-            if (duration <= 0) {
-                duration = 72000;
-            }
-            debugLog(std::string("[use] re-add component dur=") + std::to_string(duration));
-            startUsingItem(const_cast<ItemStack&>(offhandItem), duration);
-        }
-
-        origin();
-    }
+    origin();
 
     if (!offhands::isUsingOffhandItem(*this)) {
         return;
     }
 
+    inUseStack.mCount = count;
     tickOffhandItemInUse(*this);
 }
 
