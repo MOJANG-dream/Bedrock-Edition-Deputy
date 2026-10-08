@@ -19,6 +19,9 @@
 #include "mc/world/item/HandSlot.h"
 #include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
+#include "mc/deps/shared_types/legacy/item/UseAnimation.h"
+#include "mc/world/actor/player/PlayerItemInUse.h"
+#include "mc/world/ContainerID.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/phys/HitResult.h"
 #include "mc/world/phys/HitResultType.h"
@@ -64,6 +67,21 @@ thread_local std::chrono::steady_clock::time_point gLastUseIntentTime{};
 thread_local std::chrono::steady_clock::time_point gLastOffhandAction{};
 
 Player& playerOf(GameMode& gameMode) { return gameMode.mPlayer; }
+
+// 「持续型」使用：盾/弓/矛/食物等有使用动画的物品，使用中会吞掉后续点击（Java 语义）。
+// 钓竿等瞬发物品（无使用动画）不算——收杆依赖第二次点击到达 useItem。
+bool isChanneledUse(Player const& player) {
+    if (!offhands::isUsingItem(player)) {
+        return false;
+    }
+    Item const* item = player.mItemInUse.get().mItem.get().mItem.get();
+    return item != nullptr && item->mUseAnim != ::SharedTypes::Legacy::UseAnimation::None;
+}
+
+std::string itemName(ItemStack const& stack) {
+    Item const* item = stack.mItem.get();
+    return offhands::hasItem(stack) && item != nullptr ? item->mFullName.getString() : std::string("-");
+}
 
 // 临时诊断：按行追加到 <模组目录>/offhand-debug.log，方便把现场交给开发者定位。
 void debugLog(std::string const& line) {
@@ -167,12 +185,6 @@ LL_STATIC_HOOK(
 ) {
     LocalPlayer* player = client.getLocalPlayer();
 
-    // 副手物品使用中时吞掉所有使用点击（与 Java 版 handleKeybinds 一致），
-    // 否则原版 handleBuildAction 会干扰副手使用状态。
-    if (player != nullptr && offhands::isUsingOffhandItem(*player) && !offhands::HandSwapScope::isActive(*player)) {
-        return true;
-    }
-
     // 边沿检测：用「距离上一次使用意图的时间」判断是否是新的一次按下。
     // 不能依赖 BuildActionIntention 的 First* 位——它在整段按住期间会一直置位，
     // 会导致按住右键时每帧都重新使用（钓鱼竿鱼线立刻被收回、物品被连点）。
@@ -183,26 +195,46 @@ LL_STATIC_HOOK(
         gLastUseIntentTime = now;
     }
 
+    // 副手「持续型」物品（盾/弓/矛等带使用动画的）使用中时吞掉后续使用点击
+    // （与 Java 版 handleKeybinds 一致），否则原版 handleBuildAction 会干扰副手使用状态。
+    // 不带使用位的事件必须放行；钓竿等瞬发物品也不算——收杆依赖第二次点击到达 useItem。
+    if (player != nullptr && hasUseIntent && offhands::isUsingOffhandItem(*player) && isChanneledUse(*player)
+        && !offhands::HandSwapScope::isActive(*player)) {
+        return true;
+    }
+
     if (player == nullptr || !hasUseIntent || offhands::HandSwapScope::isActive(*player)) {
         return origin(client, bai, solidHitResult, liquidHitResult);
     }
 
+    if (newUseClick) {
+        debugLog(
+            std::string("[input] click intent=") + std::to_string(bai.mAction)
+            + " hit=" + std::to_string(static_cast<int>(solidHitResult.mType))
+            + " main=" + itemName(player->getSelectedItem()) + " off=" + itemName(offhands::getItem(*player))
+        );
+    }
+
     int const  intent       = bai.mAction;
-    bool const wasUsingItem = offhands::isUsingItem(*player);
+    bool const wasUsingItem = isChanneledUse(*player);
 
     MainhandAttempt attempt;
     gMainhandAttempt    = &attempt;
     bool const resetBai = origin(client, bai, solidHitResult, liquidHitResult);
     gMainhandAttempt    = nullptr;
 
-    bool const mainhandConsumed = attempt.interacted || attempt.built || attempt.used || offhands::isUsingItem(*player);
+    // 副手自身的使用状态（cid=Offhand，例如钓竿已抛出）不算主手消耗，
+    // 否则收杆的第二次点击永远到不了副手分支。
+    bool const mainhandStartedUsing = offhands::isUsingItem(*player)
+        && player->mItemInUse.get().mSlot.get().mContainerId != ::ContainerID::Offhand;
+    bool const mainhandConsumed = attempt.interacted || attempt.built || attempt.used || mainhandStartedUsing;
     if (wasUsingItem || mainhandConsumed || player->isSpectator() || !newUseClick) {
         return resetBai;
     }
 
     debugLog(
-        std::string("[input] new click intent=") + std::to_string(intent)
-        + " mainhandConsumed=" + std::to_string(mainhandConsumed) + " using=" + std::to_string(wasUsingItem)
+        std::string("[input] -> offhand consumed=") + std::to_string(mainhandConsumed)
+        + " channeled=" + std::to_string(wasUsingItem)
     );
 
     if (!offhands::hasItem(offhands::getItem(*player))) {
