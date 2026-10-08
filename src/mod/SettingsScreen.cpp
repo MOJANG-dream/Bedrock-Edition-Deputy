@@ -8,6 +8,7 @@
 #include "ll/api/event/input/MouseInputEvent.h"
 #include "ll/api/event/render/UIRenderEvent.h"
 #include "ll/api/memory/Hook.h"
+#include "ll/api/mod/NativeMod.h"
 #include "ll/api/service/TargetedBedrock.h"
 
 #include "mc/client/game/IClientInstance.h"
@@ -35,6 +36,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -133,6 +135,18 @@ std::optional<std::pair<float, float>> gPendingClick;
 std::function<void()>             gSaveCallback;
 float                         gInvScale{1.f};
 int                           gCapturing{-1}; // 正在捕获键位的键绑定行下标（kKeyRows），-1 表示未捕获
+
+// 临时诊断：菜单链路追踪，追加到 <模组目录>/offhand-debug.log。
+void menuDebugLog(std::string const& line) {
+    auto mod = ll::mod::NativeMod::current();
+    if (!mod) {
+        return;
+    }
+    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
+    if (out) {
+        out << line << '\n';
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 绘制原语
@@ -441,18 +455,22 @@ std::vector<ListenerPtr> gListeners;
 void open() {
     auto clientInstance = ll::service::bedrock::getClientInstance();
     if (!clientInstance) {
+        menuDebugLog("[menu] open() bail: no ClientInstance");
         return;
     }
     std::lock_guard lock(gMutex);
     if (gScene) {
+        menuDebugLog("[menu] open() bail: already open");
         return;
     }
     std::string screenName = clientInstance->getScreenName();
     if (screenName.rfind("hud_screen", 0) != 0) {
+        menuDebugLog(std::string("[menu] open() bail: screen=") + screenName);
         return; // 仅在 HUD 下打开，避免与聊天/暂停/其他界面叠加
     }
     auto scene = clientInstance->getSceneFactory().createCommonDialogInfoScreen("Bedrock Edition Deputy", "");
     if (!scene) {
+        menuDebugLog("[menu] open() bail: createCommonDialogInfoScreen returned null");
         return;
     }
     gClient   = &*clientInstance;
@@ -462,6 +480,7 @@ void open() {
     gOpenedAt = std::chrono::steady_clock::now();
     gPendingClick.reset();
     clientInstance->getSceneFactory().getCurrentSceneStack()->pushScreen(gScene, false);
+    menuDebugLog("[menu] open() pushed scene");
 }
 
 void close() {
@@ -489,9 +508,9 @@ bool isCapturingKey() {
 void setSaveCallback(std::function<void()> callback) { gSaveCallback = std::move(callback); }
 
 void install() {
-    SceneRenderHook::hook();
-    SceneExitHook::hook();
-    SceneBackgroundHook::hook();
+    menuDebugLog(std::string("[menu] hook render rc=") + std::to_string(SceneRenderHook::hook()));
+    menuDebugLog(std::string("[menu] hook exit rc=") + std::to_string(SceneExitHook::hook()));
+    menuDebugLog(std::string("[menu] hook bg rc=") + std::to_string(SceneBackgroundHook::hook()));
 
     auto& bus = EventBus::getInstance();
     gListeners.clear();
@@ -502,6 +521,9 @@ void install() {
             return;
         }
         event.cancel();
+        if (!gSeen) {
+            menuDebugLog("[menu] panel render begin");
+        }
         gSeen = true;
         if (gClient) {
             gInvScale = gClient->getGuiData()->mInvGuiScale;
