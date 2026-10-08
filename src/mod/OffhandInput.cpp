@@ -80,7 +80,7 @@ bool isChanneledUse(Player const& player) {
 
 std::string itemName(ItemStack const& stack) {
     Item const* item = stack.mItem.get();
-    return offhands::hasItem(stack) && item != nullptr ? item->mFullName.getString() : std::string("-");
+    return offhands::hasItem(stack) && item != nullptr ? item->mFullName->getString() : std::string("-");
 }
 
 // 临时诊断：按行追加到 <模组目录>/offhand-debug.log，方便把现场交给开发者定位。
