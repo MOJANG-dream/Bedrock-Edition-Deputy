@@ -29,7 +29,8 @@
 
 // 不包含 <windows.h>：它会引入 ERROR/interface/small/min/max 等大量宏，
 // 与 LeviLamina / MC 头文件冲突。这里仅前向声明所需的 user32 函数。
-extern "C" short __stdcall GetAsyncKeyState(int vKey);
+// 必须用 __declspec(dllimport)，否则符号名与 user32.lib 的导出不匹配（LNK2019）。
+extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey);
 #pragma comment(lib, "user32.lib")
 #ifndef VK_MENU
 #define VK_MENU 0x12
