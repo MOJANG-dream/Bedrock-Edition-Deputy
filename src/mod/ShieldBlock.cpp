@@ -123,6 +123,41 @@ LL_TYPE_INSTANCE_HOOK(
     return used;
 }
 
+// 双端：参考模组确认 baseUseItem 在客户端（输入路径）与服务端（使用事务路径）都会走到。
+// 客户端的 SurvivalMode::$useItem 实测不会被 baseUseItem 调到（日志里从无 side=c），
+// 导致客户端从不 startUsingItem，服务端同步 USINGITEM 标志后客户端把使用 reconcile 掉。
+// 因此在 baseUseItem 返回后补一次 startUsingItem；useItem hook 先启动过的话这里会被
+// !isUsingItem 检查跳过，不会重复。
+LL_TYPE_INSTANCE_HOOK(
+    ShieldBaseUseItemHook,
+    HookPriority::Normal,
+    GameMode,
+    &GameMode::baseUseItem,
+    bool,
+    ::ItemStack const& item,
+    ::HandSlot         handSlot
+) {
+    bool const used = origin(item, handSlot);
+
+    if (!modConfig().enableShieldRightClick) {
+        return used;
+    }
+
+    ::Player&   player = mPlayer;
+    Item const* type   = item.mItem.get();
+
+    if (isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
+        && !isOnCooldown(player, *type)) {
+        player.startUsingItem(item, kShieldUseDuration);
+        debugLog(
+            std::string("[hook] baseUseItem startUsingItem side=") + (player.isClientSide() ? "c" : "s")
+            + " " + usingState(player)
+        );
+    }
+
+    return used;
+}
+
 // 双端：Java 版 Player#disableShield 会停止使用盾牌。Player::tryDisableShield 只启动冷却，
 // 客户端也会收到该冷却，因此每端在冷却开始时自行停止使用。
 LL_TYPE_INSTANCE_HOOK(
@@ -199,6 +234,7 @@ LL_TYPE_INSTANCE_HOOK(
 
 void install() {
     debugLog(std::string("[hook] install useItem rc=") + std::to_string(ShieldUseItemHook::hook()));
+    debugLog(std::string("[hook] install baseUseItem rc=") + std::to_string(ShieldBaseUseItemHook::hook()));
     debugLog(std::string("[hook] install normalTick rc=") + std::to_string(ShieldBlockingTickHook::hook()));
     debugLog(std::string("[hook] install cooldown rc=") + std::to_string(ShieldStartCooldownHook::hook()));
 }
@@ -206,6 +242,7 @@ void install() {
 void uninstall() {
     ShieldStartCooldownHook::unhook();
     ShieldBlockingTickHook::unhook();
+    ShieldBaseUseItemHook::unhook();
     ShieldUseItemHook::unhook();
 }
 

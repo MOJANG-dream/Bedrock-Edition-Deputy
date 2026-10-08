@@ -42,10 +42,11 @@ namespace {
 
 Config                       config;
 std::atomic<bool>            altHeld{false};
-std::atomic<bool>            swapKeyHeld{false};
+std::atomic<bool>            swapKeyHeld{false}; // 边沿触发：忽略长按的键盘重复事件
 std::atomic<bool>            menuKeyHeld{false};
 std::vector<ll::event::ListenerPtr> listeners;
 
+// 临时诊断：菜单链路追踪，追加到 <模组目录>/offhand-debug.log。
 void menuDebugLog(std::string const& line) {
     auto mod = ll::mod::NativeMod::current();
     if (!mod) {
@@ -57,6 +58,8 @@ void menuDebugLog(std::string const& line) {
     }
 }
 
+// Alt 是系统修饰键，游戏/事件层可能不投递它自身的按下事件，
+// 导致 altHeld 永远为 false（Alt+F 打不开菜单）。这里直接读 Win32 异步键态兜底。
 bool altDownNow() {
     return altHeld.load(std::memory_order_relaxed) || (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
 }
@@ -71,11 +74,16 @@ Config& modConfig() { return config; }
 
 ll::io::Logger& modLogger() { return DeputyMod::getInstance().getSelf().getLogger(); }
 
+// ---------------------------------------------------------------------------
+// 输入处理（回调来自窗口输入线程，只做状态记录与线程切换）
+// ---------------------------------------------------------------------------
+
 static void onKey(ll::event::input::KeyInputEvent& event) {
     int  key  = event.keyCode();
     bool down = event.isDown();
 
-    if (key == Keyboard::Menu || key == 0x46) {
+    // 诊断：记录所有 F 键与 Alt 键事件，确认输入通路与键码。
+    if (key == Keyboard::Menu || key == 0x46 /* F */) {
         menuDebugLog(
             std::string("[key] key=") + std::to_string(key) + " down=" + (down ? "1" : "0")
             + " altHeld=" + (altHeld.load(std::memory_order_relaxed) ? "1" : "0")
@@ -88,6 +96,7 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
         return;
     }
 
+    // 设置界面正在捕获键位：一切按键交给界面处理。
     if (settings_screen::isCapturingKey()) {
         return;
     }
@@ -96,8 +105,24 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
     bool const isSwapKey = key == config.swapKey;
 
     if (!down) {
+        // 抬起：复位边沿状态并放行，防止卡键。
         if (isMenuKey) {
-            menuKeyHeld.store(false, std::memory_order_relaxed);
+            bool const wasHeld = menuKeyHeld.exchange(false, std::memory_order_relaxed);
+            // Alt+F 组合下 F 的 keydown 会被系统当加速键吞掉，只能看到 keyup。
+            // keydown 没处理过（wasHeld=false）且 Alt 仍按住时，用 keyup 兜底触发菜单。
+            if (!wasHeld && altDownNow()) {
+                event.cancel();
+                menuDebugLog(
+                    std::string("[menu] Alt+") + std::to_string(key) + " (keyup fallback) -> toggle settings screen"
+                );
+                runOnClientThread([] {
+                    if (settings_screen::isOpen()) {
+                        settings_screen::close();
+                    } else {
+                        settings_screen::open();
+                    }
+                });
+            }
         }
         if (isSwapKey) {
             swapKeyHeld.store(false, std::memory_order_relaxed);
@@ -105,9 +130,10 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
         return;
     }
 
+    // Alt+菜单键：打开/关闭配置界面（快捷键固定，不可改绑）
     if (isMenuKey && altDownNow()) {
         if (menuKeyHeld.exchange(true, std::memory_order_relaxed)) {
-            return;
+            return; // 长按重复
         }
         event.cancel();
         menuDebugLog(std::string("[menu] Alt+") + std::to_string(key) + " -> toggle settings screen");
@@ -121,6 +147,7 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
         return;
     }
 
+    // 设置界面打开时，界面自己处理按键（不交换）。
     if (settings_screen::isOpen()) {
         return;
     }
@@ -129,15 +156,17 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
         return;
     }
     if (swapKeyHeld.exchange(true, std::memory_order_relaxed)) {
-        return;
+        return; // 长按重复
     }
 
+    // 背包/容器界面悬停在玩家物品上：送入副手
     if (config.enableInventoryOffhand && inventory_actions::hasHoveredPlayerSlot()) {
         event.cancel();
         runOnClientThread([] { inventory_actions::swapHoveredToOffhand(); });
         return;
     }
 
+    // HUD 下：交换主副手
     auto clientInstance = ll::service::bedrock::getClientInstance();
     if (clientInstance && clientInstance->isInGameInputEnabled()) {
         event.cancel();
@@ -146,6 +175,10 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
         modLogger().debug("swap key pressed with no in-game input and no hovered player slot");
     }
 }
+
+// ---------------------------------------------------------------------------
+// 模组生命周期
+// ---------------------------------------------------------------------------
 
 DeputyMod& DeputyMod::getInstance() {
     static DeputyMod instance;
@@ -156,6 +189,7 @@ bool DeputyMod::load() {
     auto& logger = getSelf().getLogger();
     logger.debug("Loading...");
 
+    // 每次开启游戏都清空诊断日志，保证日志只包含本次会话。
     {
         std::ofstream out(getSelf().getModDir() / "offhand-debug.log", std::ios::trunc);
         if (out) {
@@ -178,6 +212,8 @@ bool DeputyMod::enable() {
     auto& logger = getSelf().getLogger();
     logger.debug("Enabling...");
 
+    // 顺序：先装物品注册/双手交换基础设施，再装依赖它的使用管线与同步，
+    // 最后装与它们协作的格挡与库存操作。
     offhands::install();
     offhand_sync::install();
     offhand_use::install();

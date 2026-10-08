@@ -50,8 +50,11 @@ LL_TYPE_INSTANCE_HOOK(
             continue;
         }
         item->mAllowOffhand = ::Item::OffhandAllowed::Yes;
-        // Java 版 ShieldItem#getUseDuration；基岩版盾牌从不「被使用」，因此没有时长。
-        if (item->mUseAnim == ::SharedTypes::Legacy::UseAnimation::Block && item->mMaxUseDuration == 0) {
+        // Java 版 ShieldItem#getUseDuration / TridentItem#getUseDuration 均为 72000；
+        // 基岩版盾牌与长矛从不「被使用」，因此没有时长（蓄力时长为 0 会立刻完成使用）。
+        if ((item->mUseAnim == ::SharedTypes::Legacy::UseAnimation::Block
+             || item->mUseAnim == ::SharedTypes::Legacy::UseAnimation::Spear)
+            && item->mMaxUseDuration == 0) {
             item->mMaxUseDuration = 72000;
         }
     }
