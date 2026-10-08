@@ -74,7 +74,7 @@ LL_TYPE_INSTANCE_HOOK(
         // 诊断：转储所有带使用动画的物品，确认新版「矛」的动画值与蓄力时长。
         if (item->mUseAnim != ::SharedTypes::Legacy::UseAnimation::None) {
             debugLog(
-                std::string("[reg] item=") + item->mFullName.getString()
+                std::string("[reg] item=") + item->mFullName->getString()
                 + " anim=" + std::to_string(static_cast<int>(item->mUseAnim))
                 + " maxDur=" + std::to_string(item->mMaxUseDuration)
             );
