@@ -344,6 +344,8 @@ void handleClick(float x, float y) {
     if (!gClient) {
         return;
     }
+    // 用上一次渲染的几何（面板始终居中，尺寸固定），重建只依赖屏幕尺寸。
+    // ScreenView 无法直接取到时，用标准 HUD 设计尺寸即可保持命中一致。
     auto* view = tRenderView;
     Geometry geo{0, 0};
     if (view) {
@@ -364,6 +366,7 @@ void handleClick(float x, float y) {
     }
     for (size_t i = 0; i < kKeyRows.size(); ++i) {
         if (geo.hitRow(kRows.size() + i, x, y)) {
+            // 点击进入/切换键位捕获；再点同一行取消捕获。
             gCapturing = gCapturing == static_cast<int>(i) ? -1 : static_cast<int>(i);
             return;
         }
@@ -396,6 +399,7 @@ LL_TYPE_INSTANCE_HOOK(
     } restore{tRenderView};
     {
         std::lock_guard lock(gMutex);
+        // 退场中的场景也要继续被取消渲染，否则借来的原版对话框会露出来。
         if (gRetired.get() == this) {
             gRetiredRendered = true;
         }
@@ -422,6 +426,9 @@ LL_TYPE_INSTANCE_HOOK(
     origin(isPopping, owned ? false : doTransitions, std::move(pushedScene));
     if (owned && isPopping) {
         std::lock_guard lock(gMutex);
+        // 立即交出「所有权」：输入不再被拦截、面板不再绘制，界面这次是真的关掉了。
+        // 但场景本体保留一小段时间（gRetired），让退场动画期间的渲染取消继续生效，
+        // 否则借来的原版对话框会露出来。
         gRetired       = std::move(gScene);
         gClient        = nullptr;
         gSeen          = false;
@@ -531,6 +538,8 @@ void install() {
 
     gListeners.emplace_back(bus.emplaceListener<AfterUIRenderEvent>([](AfterUIRenderEvent& event) {
         std::lock_guard lock(gMutex);
+        // 退场场景一旦不再被渲染就释放；只要它还在渲染就一直保持取消渲染的状态，
+        // 这样借来的原版对话框不会在任何一帧露出来。10 秒硬上限兜底。
         if (gRetired) {
             auto const now = std::chrono::steady_clock::now();
             if (!gRetiredRendered || now > gRetiredHardDeadline) {
@@ -556,11 +565,11 @@ void install() {
             return;
         }
         if (button == MouseAction::ActionWheel) {
-            event.cancel();
+            event.cancel(); // 吞掉滚轮，避免误触快捷栏
             return;
         }
         if (event.buttonData() == MouseAction::DataUp) {
-            return;
+            return; // 抬起放行，防止打开前已按下的键卡住
         }
         event.cancel();
         if (button == MouseAction::ActionLeft) {
@@ -578,14 +587,16 @@ void install() {
             return;
         }
         if (!event.isDown()) {
-            return;
+            return; // 键位抬起一律放行
         }
         event.cancel();
         int key = event.keyCode();
         if (gCapturing >= 0) {
+            // 键位捕获：Esc 取消；纯修饰键忽略；其余按键写入绑定。
             if (key == 0x1b) {
                 gCapturing = -1;
             } else if (key == 0x10 || key == 0x11 || key == 0x12 || (key >= 0xA0 && key <= 0xA5)) {
+                // Shift / Ctrl / Alt 及其左右变体：忽略，继续等待
             } else {
                 modConfig().*(kKeyRows[gCapturing].field) = key;
                 gCapturing = -1;
@@ -595,7 +606,7 @@ void install() {
             }
             return;
         }
-        if (key == 0x1b || key == 0x0d) {
+        if (key == 0x1b || key == 0x0d) { // Esc / Enter 关闭
             if (!gClosing) {
                 gClient->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
                 gClosing = true;
