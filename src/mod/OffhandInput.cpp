@@ -10,7 +10,6 @@
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/input/BuildActionIntention.h"
 #include "mc/client/player/LocalPlayer.h"
-#include "mc/deps/shared_types/legacy/item/UseAnimation.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/gamemode/GameMode.h"
@@ -40,8 +39,6 @@ Config& modConfig();
 namespace bedrock_edition_deputy::offhand_input {
 
 namespace {
-
-using SharedTypes::Legacy::UseAnimation;
 
 // BuildActionIntention 的动作位。
 constexpr int kBuildIntent    = 1 | 32;   // Build | FirstBuild
@@ -91,11 +88,6 @@ void resetDebugLog() {
     }
 }
 
-bool isShieldStack(ItemStack const& stack) {
-    Item const* item = stack.mItem.get();
-    return item != nullptr && item->mUseAnim == UseAnimation::Block;
-}
-
 // 副手动作的节流窗口。
 bool offhandActionAllowed() {
     auto const now = std::chrono::steady_clock::now();
@@ -104,34 +96,6 @@ bool offhandActionAllowed() {
     }
     gLastOffhandAction = now;
     return true;
-}
-
-// Java 版 ShieldItem#use 在手部迭代里会先于其他物品返回成功，所以举盾要排在副手重试之前。
-// 准星对着实体时原版只会走 GameMode::interact，不会调用 useItem，因此这里主动补一次。
-void startShieldUseIfHeld(LocalPlayer& player, GameMode& gameMode) {
-    if (offhands::isUsingItem(player)) {
-        return;
-    }
-
-    ItemStack const& mainhand = player.getSelectedItem();
-    if (isShieldStack(mainhand)) {
-        debugLog("[shield] try mainhand");
-        gameMode.useItem(const_cast<ItemStack&>(mainhand), HandSlot::Mainhand);
-        debugLog(std::string("[shield] after mainhand useItem using=") + (offhands::isUsingItem(player) ? "1" : "0"));
-        return;
-    }
-
-    if (!isShieldStack(offhands::getItem(player))) {
-        return;
-    }
-
-    debugLog("[shield] try offhand");
-    offhands::HandSwapScope scope(player);
-    if (scope.isSwapped()) {
-        gameMode.useItem(const_cast<ItemStack&>(player.getSelectedItem()), HandSlot::Mainhand);
-    }
-    debugLog(std::string("[shield] after offhand useItem swapped=") + (scope.isSwapped() ? "1" : "0") + " using="
-             + (offhands::isUsingItem(player) ? "1" : "0"));
 }
 
 // Minecraft#startUseItem 的 OFF_HAND 轮次，走与主手相同的 GameMode 调用。
@@ -159,7 +123,7 @@ void useOffhand(LocalPlayer& player, int intent, MainhandAttempt const& attempt,
         }
         offhands::HandSwapScope scope(player);
         if (scope.isSwapped()) {
-            gameMode.baseUseItem(player.getSelectedItem(), HandSlot::Mainhand);
+            gameMode.useItem(const_cast<ItemStack&>(player.getSelectedItem()), HandSlot::Mainhand);
         }
         return;
     }
@@ -183,8 +147,8 @@ void useOffhand(LocalPlayer& player, int intent, MainhandAttempt const& attempt,
 
     offhands::HandSwapScope scope(player);
     if (scope.isSwapped()) {
-        bool const used = gameMode.baseUseItem(player.getSelectedItem(), HandSlot::Mainhand);
-        debugLog(std::string("[use] baseUseItem used=") + (used ? "1" : "0")
+        bool const used = gameMode.useItem(const_cast<ItemStack&>(player.getSelectedItem()), HandSlot::Mainhand);
+        debugLog(std::string("[use] useItem used=") + (used ? "1" : "0")
                  + " using=" + (offhands::isUsingItem(player) ? "1" : "0"));
     }
 }
@@ -233,15 +197,7 @@ LL_STATIC_HOOK(
     debugLog(
         std::string("[input] new click intent=") + std::to_string(intent)
         + " mainhandConsumed=" + std::to_string(mainhandConsumed) + " using=" + std::to_string(wasUsingItem)
-        + " shieldOn=" + std::to_string(modConfig().enableShieldRightClick ? 1 : 0)
     );
-
-    if (modConfig().enableShieldRightClick) {
-        startShieldUseIfHeld(*player, *player->mGameMode);
-        if (offhands::isUsingItem(*player)) {
-            return resetBai;
-        }
-    }
 
     if (!offhands::hasItem(offhands::getItem(*player))) {
         return resetBai;

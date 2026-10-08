@@ -10,9 +10,10 @@
 #include "mc/entity/components/ItemInUseComponent.h"
 #include "mc/server/ServerPlayer.h"
 #include "mc/world/actor/ActorFlags.h"
+#include "mc/world/actor/provider/ActorEquipment.h"
+#include "mc/world/actor/provider/SynchedActorDataAccess.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/actor/player/PlayerItemInUse.h"
-#include "mc/world/actor/provider/SynchedActorDataAccess.h"
 #include "mc/world/gamemode/GameMode.h"
 #include "mc/world/gamemode/SurvivalMode.h"
 #include "mc/world/item/Item.h"
@@ -66,6 +67,18 @@ std::string usingState(::Player const& player) {
 
 bool isShield(Item const* item) { return item != nullptr && item->mUseAnim == UseAnimation::Block; }
 
+// 检查玩家手中是否仍有盾牌（主手或副手）。
+bool playerStillHasShield(::Player const& player) {
+    auto& handContainer = ActorEquipment::getHandContainer(const_cast<::Player&>(player).getEntityContext());
+    for (int i = 0; i < 2; ++i) {
+        ItemStack const& stack = handContainer.getItem(i);
+        if (offhands::hasItem(stack) && isShield(stack.mItem.get())) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // 当前正在使用的物品（没有则为 nullptr）。
 Item const* inUseItem(::Player const& player) {
     if (!offhands::isUsingItem(player)) {
@@ -84,6 +97,13 @@ bool isUsingShield(::Player const& player) {
     Item const* item = inUseItem(player);
     return isShield(item) && !isOnCooldown(player, *item);
 }
+
+// 配置关闭时强制收盾的 bypass 标志。
+thread_local bool gForceStop = false;
+
+// releaseUsingItem 正在执行时置 true，让 stopUsingItem 守卫放行（玩家松手降盾）。
+// HandSwapScope 析构等非松手路径触发 stopUsingItem 时该标志为 false，守卫拦截。
+thread_local bool gInReleaseUsingItem = false;
 
 // 双端：客户端经使用输入、服务端经使用事务都会走到这里。
 // 注意：实际生效的是 SurvivalMode 的覆写，挂 GameMode::$useItem 生存模式下永远不会被调用。
@@ -120,21 +140,40 @@ LL_TYPE_INSTANCE_HOOK(
     return used;
 }
 
-// 追踪到底是谁结束了使用： vanilla 的「停止/完成使用」路径都会经过这两个函数。
-LL_TYPE_INSTANCE_HOOK(ShieldStopUsingTraceHook, HookPriority::Normal, Player, &Player::stopUsingItem, void) {
+// 守卫：当玩家正在使用盾牌且盾牌仍在手中时，拦截 stopUsingItem，
+// 防止 HandSwapScope 析构、normalTick 等非松手路径杀死使用状态。
+// releaseUsingItem（松手降盾）执行时 gInReleaseUsingItem=true，守卫放行。
+// 玩家也可以通过切换物品来收盾（切走盾牌后 playerStillHasShield 返回 false，守卫自然失效）。
+LL_TYPE_INSTANCE_HOOK(ShieldStopUsingGuardHook, HookPriority::Normal, Player, &Player::stopUsingItem, void) {
+    if (!gForceStop && !gInReleaseUsingItem) {
+        Item const* item = inUseItem(*this);
+        if (isShield(item) && playerStillHasShield(*this)) {
+            debugLog(std::string("[guard] blocked stopUsingItem ") + usingState(*this));
+            return;
+        }
+    }
     debugLog(std::string("[trace] stopUsingItem ") + usingState(*this));
     origin();
 }
 
-LL_TYPE_INSTANCE_HOOK(ShieldCompleteUsingTraceHook, HookPriority::Normal, Player, &Player::completeUsingItem, void) {
+LL_TYPE_INSTANCE_HOOK(ShieldCompleteUsingGuardHook, HookPriority::Normal, Player, &Player::completeUsingItem, void) {
+    if (!gForceStop) {
+        Item const* item = inUseItem(*this);
+        if (isShield(item) && playerStillHasShield(*this)) {
+            debugLog(std::string("[guard] blocked completeUsingItem ") + usingState(*this));
+            return;
+        }
+    }
     debugLog(std::string("[trace] completeUsingItem ") + usingState(*this));
     origin();
 }
 
-// 追踪 releaseUsingItem：玩家松开右键时走这条路径，确认是否是它杀了使用状态。
+// releaseUsingItem 是玩家松手降盾的正道。置 gInReleaseUsingItem 让 stopUsingItem 守卫放行。
 LL_TYPE_INSTANCE_HOOK(ShieldReleaseTraceHook, HookPriority::Normal, GameMode, &GameMode::$releaseUsingItem, void) {
     debugLog(std::string("[trace] releaseUsingItem ") + usingState(mPlayer));
+    gInReleaseUsingItem = true;
     origin();
+    gInReleaseUsingItem = false;
 }
 
 // 服务端：ServerPlayer::normalTick 原本在潜行/骑乘时置 BLOCKING。Java 版只在
@@ -158,7 +197,9 @@ LL_TYPE_INSTANCE_HOOK(
     if (!cfg.enableShieldRightClick) {
         Item const* item = inUseItem(*this);
         if (isShield(item) && isUsingShield(*this)) {
+            gForceStop = true;
             stopUsingItem();
+            gForceStop = false;
         }
         SynchedActorDataAccess::setActorFlag(entity, ActorFlags::TransitionBlocking, false);
         SynchedActorDataAccess::setActorFlag(entity, ActorFlags::Blocking, false);
@@ -186,15 +227,15 @@ LL_TYPE_INSTANCE_HOOK(
 void install() {
     debugLog(std::string("[hook] install useItem rc=") + std::to_string(ShieldUseItemHook::hook()));
     debugLog(std::string("[hook] install normalTick rc=") + std::to_string(ShieldBlockingTickHook::hook()));
-    debugLog(std::string("[hook] install stopTrace rc=") + std::to_string(ShieldStopUsingTraceHook::hook()));
-    debugLog(std::string("[hook] install completeTrace rc=") + std::to_string(ShieldCompleteUsingTraceHook::hook()));
+    debugLog(std::string("[hook] install stopGuard rc=") + std::to_string(ShieldStopUsingGuardHook::hook()));
+    debugLog(std::string("[hook] install completeGuard rc=") + std::to_string(ShieldCompleteUsingGuardHook::hook()));
     debugLog(std::string("[hook] install releaseTrace rc=") + std::to_string(ShieldReleaseTraceHook::hook()));
 }
 
 void uninstall() {
     ShieldReleaseTraceHook::unhook();
-    ShieldCompleteUsingTraceHook::unhook();
-    ShieldStopUsingTraceHook::unhook();
+    ShieldCompleteUsingGuardHook::unhook();
+    ShieldStopUsingGuardHook::unhook();
     ShieldBlockingTickHook::unhook();
     ShieldUseItemHook::unhook();
 }

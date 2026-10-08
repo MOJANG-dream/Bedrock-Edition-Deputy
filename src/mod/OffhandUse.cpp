@@ -82,6 +82,13 @@ void tickOffhandItemInUse(Player& player) {
         return;
     }
 
+    // mDuration==0 但物品有使用时长（食物/弓/盾牌等）时，组件可能刚创建尚未初始化。
+    // 贸然 completeUsingItem 会导致使用状态立刻死亡并无限循环。
+    // 仅对 mMaxUseDuration==0 的即时型物品（钓鱼竿等）才立即结算。
+    if (item->mMaxUseDuration > 0) {
+        return;
+    }
+
     if (clientSide && item->isFood()) {
         player.eat(offhandItem);
     }
