@@ -123,7 +123,7 @@ void useOffhand(LocalPlayer& player, int intent, MainhandAttempt const& attempt,
         }
         offhands::HandSwapScope scope(player);
         if (scope.isSwapped()) {
-            gameMode.useItem(const_cast<ItemStack&>(player.getSelectedItem()), HandSlot::Mainhand);
+            gameMode.baseUseItem(const_cast<ItemStack&>(player.getSelectedItem()), HandSlot::Mainhand);
         }
         return;
     }
@@ -147,8 +147,8 @@ void useOffhand(LocalPlayer& player, int intent, MainhandAttempt const& attempt,
 
     offhands::HandSwapScope scope(player);
     if (scope.isSwapped()) {
-        bool const used = gameMode.useItem(const_cast<ItemStack&>(player.getSelectedItem()), HandSlot::Mainhand);
-        debugLog(std::string("[use] useItem used=") + (used ? "1" : "0")
+        bool const used = gameMode.baseUseItem(const_cast<ItemStack&>(player.getSelectedItem()), HandSlot::Mainhand);
+        debugLog(std::string("[use] baseUseItem used=") + (used ? "1" : "0")
                  + " using=" + (offhands::isUsingItem(player) ? "1" : "0"));
     }
 }
@@ -166,6 +166,12 @@ LL_STATIC_HOOK(
     ::HitResult const&      liquidHitResult
 ) {
     LocalPlayer* player = client.getLocalPlayer();
+
+    // 副手物品使用中时吞掉所有使用点击（与 Java 版 handleKeybinds 一致），
+    // 否则原版 handleBuildAction 会干扰副手使用状态。
+    if (player != nullptr && offhands::isUsingOffhandItem(*player) && !offhands::HandSwapScope::isActive(*player)) {
+        return true;
+    }
 
     // 边沿检测：用「距离上一次使用意图的时间」判断是否是新的一次按下。
     // 不能依赖 BuildActionIntention 的 First* 位——它在整段按住期间会一直置位，
