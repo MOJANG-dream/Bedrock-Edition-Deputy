@@ -45,10 +45,11 @@ target("bedrock-edition-deputy")
     add_headerfiles("src/**.h")
     add_files("src/**.cpp")
     add_includedirs("src")
-    if is_config("target_type", "server") then
-    --  add_includedirs("src-server")
-    --  add_files("src-server/**.cpp")
-    else
-    --  add_includedirs("src-client")
-    --  add_files("src-client/**.cpp")
+    -- 客户端构建附带资源包（副手动画/控制器），运行时注入资源包栈。
+    -- modpacker 只打包 DLL+PDB+manifest.json，这里在打包后补上 packs 目录。
+    if is_config("target_type", "client") then
+        after_build(function(target)
+            local outputdir = path.join(os.projectdir(), "bin", target:name())
+            os.cp(path.join(os.projectdir(), "data", "packs"), path.join(outputdir, "packs"))
+        end)
     end

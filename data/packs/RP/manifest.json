@@ -1,0 +1,29 @@
+{
+    "format_version": 2,
+    "header": {
+        "name": "Bedrock Edition Deputy RP",
+        "description": "Offhand player model animations",
+        "uuid": "3f8c7a2e-5b4d-4e1a-9c6f-2d8a7b1e5f30",
+        "version": [
+            1,
+            0,
+            0
+        ],
+        "min_engine_version": [
+            1,
+            26,
+            0
+        ]
+    },
+    "modules": [
+        {
+            "type": "resources",
+            "uuid": "8a1e4c6d-2f7b-4a3e-b5d9-1c6e8f2a4b70",
+            "version": [
+                1,
+                0,
+                0
+            ]
+        }
+    ]
+}

@@ -1,3 +1,6 @@
+// 仅客户端：设置界面依赖客户端 UI 渲染与输入事件。服务端构建时本文件编译为空。
+#ifdef LL_PLAT_C
+
 #include "mod/SettingsScreen.h"
 
 #include "mod/Config.h"
@@ -634,3 +637,5 @@ void uninstall() {
 }
 
 } // namespace bedrock_edition_deputy::settings_screen
+
+#endif // LL_PLAT_C

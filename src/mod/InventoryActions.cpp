@@ -1,3 +1,6 @@
+// 仅客户端：库存操作依赖客户端容器界面控制器。服务端构建时本文件编译为空。
+#ifdef LL_PLAT_C
+
 #include "mod/InventoryActions.h"
 
 #include "ll/api/io/Logger.h"
@@ -387,3 +390,5 @@ void uninstall() {
 }
 
 } // namespace bedrock_edition_deputy::inventory_actions
+
+#endif // LL_PLAT_C

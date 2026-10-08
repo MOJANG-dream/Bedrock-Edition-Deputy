@@ -1,3 +1,6 @@
+// 仅客户端：输入拦截依赖客户端输入事件与服务。服务端构建时本文件编译为空。
+#ifdef LL_PLAT_C
+
 #include "mod/OffhandInput.h"
 
 #include "mod/Config.h"
@@ -68,14 +71,20 @@ thread_local std::chrono::steady_clock::time_point gLastOffhandAction{};
 
 Player& playerOf(GameMode& gameMode) { return gameMode.mPlayer; }
 
-// 「持续型」使用：盾/弓/矛/食物等有使用动画的物品，使用中会吞掉后续点击（Java 语义）。
-// 钓竿等瞬发物品（无使用动画）不算——收杆依赖第二次点击到达 useItem。
+// 「持续型」使用：带使用动画或有蓄力时长的物品，使用中会吞掉后续点击（Java 语义）。
+// 矛（1.26 新武器）使用动画是 None 但有蓄力时长，也算持续型；
+// 钓竿 maxDur=0 是瞬发——收杆依赖第二次点击到达 useItem。
 bool isChanneledUse(Player const& player) {
     if (!offhands::isUsingItem(player)) {
         return false;
     }
-    Item const* item = player.mItemInUse.get().mItem.get().mItem.get();
-    return item != nullptr && item->mUseAnim != ::SharedTypes::Legacy::UseAnimation::None;
+    ItemStack const& inUse = player.mItemInUse.get().mItem.get();
+    Item const*      item  = inUse.mItem.get();
+    if (item == nullptr) {
+        return false;
+    }
+    return item->mUseAnim != ::SharedTypes::Legacy::UseAnimation::None
+        || item->getMaxUseDuration(&inUse) > 0;
 }
 
 std::string itemName(ItemStack const& stack) {
@@ -195,10 +204,11 @@ LL_STATIC_HOOK(
         gLastUseIntentTime = now;
     }
 
-    // 副手「持续型」物品（盾/弓/矛等带使用动画的）使用中时吞掉后续使用点击
-    // （与 Java 版 handleKeybinds 一致），否则原版 handleBuildAction 会干扰副手使用状态。
-    // 不带使用位的事件必须放行；钓竿等瞬发物品也不算——收杆依赖第二次点击到达 useItem。
-    if (player != nullptr && hasUseIntent && offhands::isUsingOffhandItem(*player) && isChanneledUse(*player)
+    // 副手物品使用中时吞掉后续使用点击（与 Java 版 handleKeybinds 一致），
+    // 否则原版 handleBuildAction 会干扰副手使用状态。参考模组在此无条件吞掉：
+    // 钓竿的瞬发使用会在下一刻被 tickOffhandItemInUse 完成掉，收杆点击到达时
+    // 使用状态已结束，不受影响。不带使用位的事件必须放行。
+    if (player != nullptr && hasUseIntent && offhands::isUsingOffhandItem(*player)
         && !offhands::HandSwapScope::isActive(*player)) {
         return true;
     }
@@ -378,3 +388,5 @@ void uninstall() {
 }
 
 } // namespace bedrock_edition_deputy::offhand_input
+
+#endif // LL_PLAT_C

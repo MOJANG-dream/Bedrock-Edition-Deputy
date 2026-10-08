@@ -2,10 +2,14 @@ on:
   pull_request:
   push:
   workflow_dispatch:
-  
+
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target_type: [client, server]
     steps:
       - uses: actions/checkout@v7
 
@@ -17,8 +21,9 @@ jobs:
         with:
           path: |
             ~/AppData/Local/.xmake
-          key: xmake-${{ hashFiles('xmake.lua') }}
+          key: xmake-${{ matrix.target_type }}-${{ hashFiles('xmake.lua') }}
           restore-keys: |
+            xmake-${{ matrix.target_type }}-
             xmake-
 
       - name: Setup LLVM
@@ -30,13 +35,13 @@ jobs:
           xmake repo -u
 
       - run: |
-          xmake f -a x64 -m release -p windows -v --target_type=client -y
+          xmake f -a x64 -m release -p windows -v --target_type=${{ matrix.target_type }} -y
 
       - run: |
           xmake -v -y
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.event.repository.name }}-${{ github.sha }}-client-windows-x64
+          name: ${{ github.event.repository.name }}-${{ github.sha }}-${{ matrix.target_type }}-windows-x64
           path: |
             bin/

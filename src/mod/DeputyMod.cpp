@@ -1,20 +1,30 @@
 #include "mod/DeputyMod.h"
 
 #include "mod/Config.h"
-#include "mod/InventoryActions.h"
-#include "mod/OffhandInput.h"
-#include "mod/OffhandRender.h"
+#include "mod/OffhandPlayerModel.h"
+#include "mod/OffhandResourcePack.h"
 #include "mod/OffhandSync.h"
 #include "mod/OffhandUse.h"
 #include "mod/Offhands.h"
-#include "mod/SettingsScreen.h"
 #include "mod/ShieldBlock.h"
 
 #include "ll/api/Config.h"
-#include "ll/api/event/EventBus.h"
-#include "ll/api/event/input/KeyInputEvent.h"
 #include "ll/api/io/Logger.h"
 #include "ll/api/mod/RegisterHelper.h"
+
+#include <fstream>
+#include <string>
+
+// 以下为仅客户端的部分：输入、渲染、设置界面与玩家模型动画。
+#ifdef LL_PLAT_C
+
+#include "mod/InventoryActions.h"
+#include "mod/OffhandInput.h"
+#include "mod/OffhandRender.h"
+#include "mod/SettingsScreen.h"
+
+#include "ll/api/event/EventBus.h"
+#include "ll/api/event/input/KeyInputEvent.h"
 #include "ll/api/service/TargetedBedrock.h"
 #include "ll/api/thread/ClientThreadExecutor.h"
 
@@ -22,9 +32,7 @@
 #include "mc/deps/input/Keyboard.h"
 
 #include <atomic>
-#include <fstream>
 #include <functional>
-#include <string>
 #include <vector>
 
 // 不包含 <windows.h>：它会引入 ERROR/interface/small/min/max 等大量宏，
@@ -36,11 +44,16 @@ extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey);
 #define VK_MENU 0x12
 #endif
 
+#endif // LL_PLAT_C
+
 namespace bedrock_edition_deputy {
 
 namespace {
 
-Config                       config;
+Config config;
+
+#ifdef LL_PLAT_C
+
 std::atomic<bool>            altHeld{false};
 std::atomic<bool>            swapKeyHeld{false}; // 边沿触发：忽略长按的键盘重复事件
 std::atomic<bool>            menuKeyHeld{false};
@@ -68,11 +81,15 @@ void runOnClientThread(std::function<void()> task) {
     ll::thread::ClientThreadExecutor::getDefault().execute(std::move(task));
 }
 
+#endif // LL_PLAT_C
+
 } // namespace
 
 Config& modConfig() { return config; }
 
 ll::io::Logger& modLogger() { return DeputyMod::getInstance().getSelf().getLogger(); }
+
+#ifdef LL_PLAT_C
 
 // ---------------------------------------------------------------------------
 // 输入处理（回调来自窗口输入线程，只做状态记录与线程切换）
@@ -176,6 +193,8 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
     }
 }
 
+#endif // LL_PLAT_C
+
 // ---------------------------------------------------------------------------
 // 模组生命周期
 // ---------------------------------------------------------------------------
@@ -213,14 +232,19 @@ bool DeputyMod::enable() {
     logger.debug("Enabling...");
 
     // 顺序：先装物品注册/双手交换基础设施，再装依赖它的使用管线与同步，
-    // 最后装与它们协作的格挡与库存操作。
+    // 最后装与它们协作的格挡。以下为双端共享部分。
     offhands::install();
     offhand_sync::install();
     offhand_use::install();
+    shield_block::install();
+
+#ifdef LL_PLAT_C
+    // 仅客户端：输入、渲染、库存操作、设置界面、副手模型动画与资源包注入。
     offhand_input::install();
     offhand_render::install();
-    shield_block::install();
     inventory_actions::install();
+    offhand_resource_pack::install();
+    offhand_player_model::install();
     settings_screen::setSaveCallback([this] {
         const auto& configFilePath = getSelf().getConfigDir() / "config.json";
         if (!ll::config::saveConfig(config, configFilePath)) {
@@ -231,6 +255,7 @@ bool DeputyMod::enable() {
 
     auto& bus = ll::event::EventBus::getInstance();
     listeners.emplace_back(bus.emplaceListener<ll::event::input::KeyInputEvent>(onKey));
+#endif
 
     return true;
 }
@@ -239,6 +264,7 @@ bool DeputyMod::disable() {
     auto& logger = getSelf().getLogger();
     logger.debug("Disabling...");
 
+#ifdef LL_PLAT_C
     auto& bus = ll::event::EventBus::getInstance();
     for (auto& listener : listeners) {
         bus.removeListener(listener);
@@ -247,16 +273,20 @@ bool DeputyMod::disable() {
 
     settings_screen::uninstall();
     settings_screen::setSaveCallback(nullptr);
+    offhand_player_model::uninstall();
+    offhand_resource_pack::uninstall();
     inventory_actions::uninstall();
-    shield_block::uninstall();
     offhand_render::uninstall();
     offhand_input::uninstall();
-    offhand_use::uninstall();
-    offhand_sync::uninstall();
-    offhands::uninstall();
     altHeld.store(false, std::memory_order_relaxed);
     swapKeyHeld.store(false, std::memory_order_relaxed);
     menuKeyHeld.store(false, std::memory_order_relaxed);
+#endif
+
+    shield_block::uninstall();
+    offhand_use::uninstall();
+    offhand_sync::uninstall();
+    offhands::uninstall();
 
     return true;
 }

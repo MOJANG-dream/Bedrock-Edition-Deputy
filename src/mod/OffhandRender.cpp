@@ -1,3 +1,6 @@
+// 仅客户端：副手第一人称渲染依赖客户端渲染器。服务端构建时本文件编译为空。
+#ifdef LL_PLAT_C
+
 #include "mod/OffhandRender.h"
 
 #include "mod/Offhands.h"
@@ -131,3 +134,5 @@ void uninstall() {
 }
 
 } // namespace bedrock_edition_deputy::offhand_render
+
+#endif // LL_PLAT_C
