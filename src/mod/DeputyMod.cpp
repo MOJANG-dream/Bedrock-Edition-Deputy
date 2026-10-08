@@ -24,7 +24,10 @@
 #include <atomic>
 #include <fstream>
 #include <functional>
+#include <string>
 #include <vector>
+
+#include <windows.h>
 
 namespace bedrock_edition_deputy {
 
@@ -35,6 +38,24 @@ std::atomic<bool>            altHeld{false};
 std::atomic<bool>            swapKeyHeld{false}; // 边沿触发：忽略长按的键盘重复事件
 std::atomic<bool>            menuKeyHeld{false};
 std::vector<ll::event::ListenerPtr> listeners;
+
+// 临时诊断：菜单链路追踪，追加到 <模组目录>/offhand-debug.log。
+void menuDebugLog(std::string const& line) {
+    auto mod = ll::mod::NativeMod::current();
+    if (!mod) {
+        return;
+    }
+    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
+    if (out) {
+        out << line << '\n';
+    }
+}
+
+// Alt 是系统修饰键，游戏/事件层可能不投递它自身的按下事件，
+// 导致 altHeld 永远为 false（Alt+F 打不开菜单）。这里直接读 Win32 异步键态兜底。
+bool altDownNow() {
+    return altHeld.load(std::memory_order_relaxed) || (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+}
 
 void runOnClientThread(std::function<void()> task) {
     ll::thread::ClientThreadExecutor::getDefault().execute(std::move(task));
@@ -79,11 +100,12 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
     }
 
     // Alt+菜单键：打开/关闭配置界面（快捷键固定，不可改绑）
-    if (isMenuKey && altHeld.load(std::memory_order_relaxed)) {
+    if (isMenuKey && altDownNow()) {
         if (menuKeyHeld.exchange(true, std::memory_order_relaxed)) {
             return; // 长按重复
         }
         event.cancel();
+        menuDebugLog(std::string("[menu] Alt+") + std::to_string(key) + " -> toggle settings screen");
         runOnClientThread([] {
             if (settings_screen::isOpen()) {
                 settings_screen::close();
