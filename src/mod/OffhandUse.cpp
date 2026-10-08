@@ -110,19 +110,23 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
 
-    // Player::normalTick 会停掉「物品不在选中槽」的使用。把数量清零只骗过这一处检查：
-    // isUsingItem / getItemInUse 走 isNull，不看数量。
-    ItemStack&  itemInUse = mItemInUse.get().mItem.get();
-    uchar const count     = itemInUse.mCount;
-    itemInUse.mCount      = 0;
-
-    origin();
+    // 本版本（1.26.51）原版 tick 里的「使用中物品」一致性检查会核对槽位/ECS 组件，
+    // 参考模板的「数量清零」只骗得过按物品比对的旧实现：副手使用时选中槽是主手物品，
+    // 检查不通过就会每刻 stopUsingItem，ECS 组件与 USINGITEM 标志也被清掉
+    // （日志现象：副手鱼竿/食物等刚 startUsingItem 就 ecsDur=-1、uf=0）。
+    // 因此在 normalTick 期间直接建立完整 HandSwapScope：ctor 会把 mItemInUse.mSlot
+    // 重映射到背包选中槽，且选中槽此时物理持有副手物品——物品、槽位、ECS 三个维度
+    // 在 origin 执行期间全部一致，任何口径的检查都能通过；时长归零的结算（吃完食物等）
+    // 也自然作用于副手。dtor 负责换回并重映射回副手槽，外界无感。
+    {
+        offhands::HandSwapScope scope(*this);
+        origin();
+    }
 
     if (!offhands::isUsingOffhandItem(*this)) {
         return;
     }
 
-    itemInUse.mCount = count;
     tickOffhandItemInUse(*this);
 }
 
