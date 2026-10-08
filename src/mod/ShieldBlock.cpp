@@ -70,7 +70,7 @@ std::string usingState(::Player const& player) {
 bool isShield(Item const* item) { return item != nullptr && item->mUseAnim == UseAnimation::Block; }
 
 std::string itemName(Item const* item) {
-    return item != nullptr ? item->mFullName.getString() : std::string("-");
+    return item != nullptr ? item->mFullName->getString() : std::string("-");
 }
 
 std::string itemProps(Item const* item) {
