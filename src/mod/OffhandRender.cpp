@@ -17,9 +17,8 @@
 #include "mc/deps/minecraft_renderer/game/ItemContextFlags.h"
 #include "mc/deps/renderer/Camera.h"
 #include "mc/deps/renderer/MatrixStack.h"
-#include "mc/deps/shared_types/legacy/item/UseAnimation.h"
+#include "mc/entity/components/ItemInUseComponent.h"
 #include "mc/world/actor/player/Player.h"
-#include "mc/world/actor/player/PlayerItemInUse.h"
 #include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
 
@@ -33,6 +32,16 @@
 namespace bedrock_edition_deputy::offhand_render {
 
 namespace {
+
+// renderOffhandItem 只收到 renderFirstPerson flags 的一个子集，缺 FirstPersonPass/InHand
+// 位时 renderItem 会直接不画（表现为副手模型完全消失）。在 renderFirstPerson 里捕获
+// 完整 flags，供 renderOffhandItem 的自绘路径使用。
+thread_local ::ItemContextFlags firstPersonItemFlags = ::ItemContextFlags::None;
+
+// renderFirstPerson 期间隐藏副手的使用动画（原版假定「使用中」一定是主手）：
+// 把使用组件时长临时置零，主手就会按常态姿态绘制。
+thread_local bool hidingOffhandUse   = false;
+thread_local int  offhandUseDuration = 0;
 
 // 把姿态沿 x 轴镜像到左手。行列下标约定与 glm 一致：_m[列][行]。
 void mirrorInPlace(Matrix& pose) {
@@ -85,13 +94,16 @@ LL_TYPE_INSTANCE_HOOK(
     auto matrixRef = renderContext.mScreenContext.camera.worldMatrixStack.get().push(false);
     matrixRef.mat->_m.get() = matrixRef.mat->_m.get() * pose._m.get();
 
-    renderItem(renderContext, player, item, false, itemFlags, useBlockTransforms, true);
+    // 与参考模组一致：用 renderFirstPerson 的完整 flags 自绘，否则不渲染。
+    ::ItemContextFlags const renderFlags = firstPersonItemFlags != ::ItemContextFlags::None
+        ? firstPersonItemFlags
+        : itemFlags;
+    renderItem(renderContext, player, item, false, renderFlags, useBlockTransforms, true);
 }
 
-// 原版 renderFirstPerson 假定「使用中物品」一定是主手：副手盾格挡时它会把盾
-// 画在主手位置并播放格挡动画，看起来主手也多出一面盾。这里在副手「持续型」
-// 使用期间临时把使用中物品换成主手物品（主手物品不在使用中，按平常姿态绘制），
-// 画完恢复。钓竿等瞬发使用不换，免得钓线附着的手部位置被改。
+// 原版 renderFirstPerson 假定「使用中物品」一定是主手：副手盾格挡/进食时它会把
+// 使用动画套在主手上。参考模组的做法是把使用组件时长临时置零（渲染主手按常态
+// 姿态绘制），画完恢复；同时捕获完整 itemFlags 供 renderOffhandItem 自绘使用。
 LL_TYPE_INSTANCE_HOOK(
     MainhandFirstPersonHook,
     HookPriority::Normal,
@@ -102,23 +114,29 @@ LL_TYPE_INSTANCE_HOOK(
     ::Matrix const&           prevProj,
     ::ItemContextFlags        itemFlags
 ) {
+    firstPersonItemFlags = itemFlags;
+
     LocalPlayer* player = mClient.getLocalPlayer();
     if (player == nullptr || !offhands::isUsingOffhandItem(*player)) {
         origin(renderContext, prevProj, itemFlags);
+        firstPersonItemFlags = ::ItemContextFlags::None;
         return;
     }
 
-    ItemStack&  inUse = player->mItemInUse.get().mItem.get();
-    Item const* type  = inUse.mItem.get();
-    if (type == nullptr || type->mUseAnim == ::SharedTypes::Legacy::UseAnimation::None) {
-        origin(renderContext, prevProj, itemFlags);
-        return;
+    auto* component = player->getEntityContext().tryGetComponent<::ItemInUseComponent>();
+    if (component != nullptr) {
+        offhandUseDuration   = component->mDuration;
+        hidingOffhandUse     = true;
+        component->mDuration = 0;
     }
 
-    ItemStack const offhandInUse = inUse;
-    inUse                        = player->getSelectedItem();
     origin(renderContext, prevProj, itemFlags);
-    inUse = offhandInUse;
+
+    if (component != nullptr) {
+        component->mDuration = offhandUseDuration;
+        hidingOffhandUse     = false;
+    }
+    firstPersonItemFlags = ::ItemContextFlags::None;
 }
 
 } // namespace

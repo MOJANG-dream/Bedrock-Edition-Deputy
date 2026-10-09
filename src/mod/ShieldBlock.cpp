@@ -131,9 +131,16 @@ LL_TYPE_INSTANCE_HOOK(
 
     // 服务端使用中每刻会自动调 useItem。wasUsing 为真说明这次调用发生在使用期间，
     // 若 origin 把使用掐掉了也不能重启——否则快速点击时盾牌会反复闪起（僵尸重启循环）。
+    // startUsingItem 按「当前选中槽」记录使用来源；盾牌在副手容器里，必须让记录指向
+    // 副手，否则 normalTick 的「使用物品不在选中槽」检查会每刻把使用掐掉重启。
+    // HandSwapScope 内选中槽即副手，析构时把使用槽位改写到 Offhand 容器。
     if (!wasUsing && isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
-        player.startUsingItem(item, kShieldUseDuration);
+        {
+            offhands::HandSwapScope scope(player);
+            player.startUsingItem(item, kShieldUseDuration);
+        }
+        // 日志放在 scope 析构后：此时使用槽位已被改写到副手容器。
         debugLog(std::string("[hook] startUsingItem done ") + usingState(player));
     }
 
@@ -166,7 +173,11 @@ LL_TYPE_INSTANCE_HOOK(
 
     if (!wasUsing && isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
-        player.startUsingItem(item, kShieldUseDuration);
+        // 同 useItem 侧：在 HandSwapScope 内启动，让使用槽位记录到副手容器。
+        {
+            offhands::HandSwapScope scope(player);
+            player.startUsingItem(item, kShieldUseDuration);
+        }
         debugLog(
             std::string("[hook] baseUseItem startUsingItem side=") + (player.isClientSide() ? "c" : "s")
             + " item=" + itemName(type) + " " + usingState(player)
