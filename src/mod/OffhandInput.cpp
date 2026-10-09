@@ -16,7 +16,6 @@
 #include "mc/world/actor/Actor.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/gamemode/GameMode.h"
-#include "mc/world/gamemode/InteractionResult.h"
 #include "mc/world/gamemode/SurvivalMode.h"
 #include "mc/world/inventory/transaction/ComplexInventoryTransaction.h"
 #include "mc/world/item/HandSlot.h"
@@ -293,30 +292,9 @@ LL_TYPE_INSTANCE_HOOK(
     return origin(pos, face, handSlot, isSimTick);
 }
 
-// 记录主手是否成功「对着方块使用物品」——原版放置方块多数走这条路径，
-// 不记录就会被误判成主手没有消耗，进而对副手重复使用。
-LL_TYPE_INSTANCE_HOOK(
-    OffhandUseItemOnHook,
-    HookPriority::Normal,
-    SurvivalMode,
-    &SurvivalMode::$useItemOn,
-    ::InteractionResult,
-    ::ItemStack&      item,
-    ::BlockPos const& at,
-    uchar             face,
-    ::Vec3 const&     hit,
-    ::HandSlot        handSlot,
-    ::Block const*    targetBlock,
-    bool              isFirstEvent
-) {
-    ::InteractionResult const result = origin(item, at, face, hit, handSlot, targetBlock, isFirstEvent);
-
-    if (gMainhandAttempt != nullptr && !offhands::HandSwapScope::isActive(playerOf(*this)) && result.mSuccess) {
-        gMainhandAttempt->used = true;
-    }
-
-    return result;
-}
+// 注意：useItemOn 不能参与主手消耗判定。原版 GameMode::useItemOn 只对主手返回成功
+// （副手槽恒返回失败），在副手场景记为 consumed 会让副手永远轮不到；这正是
+// 「盾牌在主手时点方块后副手盾不举」的来源。参考模组完全不 hook useItemOn。
 
 // 记录主手是否与实体交互；副手轮次里交换双手后重试。
 LL_TYPE_INSTANCE_HOOK(
@@ -380,7 +358,6 @@ void install() {
     resetDebugLog();
     HandleBuildActionHook::hook();
     OffhandBuildBlockHook::hook();
-    OffhandUseItemOnHook::hook();
     OffhandInteractHook::hook();
     OffhandBaseUseItemHook::hook();
     LocalSendComplexTransactionHook::hook();
@@ -390,7 +367,6 @@ void uninstall() {
     LocalSendComplexTransactionHook::unhook();
     OffhandBaseUseItemHook::unhook();
     OffhandInteractHook::unhook();
-    OffhandUseItemOnHook::unhook();
     OffhandBuildBlockHook::unhook();
     HandleBuildActionHook::unhook();
     gMainhandAttempt   = nullptr;
