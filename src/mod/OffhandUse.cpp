@@ -7,6 +7,7 @@
 
 #include "mc/deps/shared_types/legacy/item/UseAnimation.h"
 #include "mc/entity/components/ItemInUseComponent.h"
+#include "mc/legacy/ActorRuntimeID.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/actor/player/PlayerItemInUse.h"
 #include "mc/world/gamemode/GameMode.h"
@@ -19,6 +20,7 @@
 
 #include <fstream>
 #include <string>
+#include <unordered_map>
 
 // 副手物品的「使用中」维持逻辑，移植自参考模组的 OffhandItemUse.cpp：
 // Player::normalTick 的物品使用块会停掉「物品不在选中槽」的使用。把使用物品的
@@ -182,15 +184,64 @@ LL_TYPE_INSTANCE_HOOK(
 
 } // namespace
 
+// 移植参考模组的 OffhandUseSync：服务端每次开始使用物品时记录用的是哪只手；
+// 客户端的使用状态被 USINGITEM 标志重启时（标志同步只带「在使用」不带手，
+// 原版会从选中槽=主手重启，把手搞错）按记录的手从副手重启。
+// 本地整合服与客户端同进程，共用这张表即可，不需要参考模组的自定义数据包。
+namespace {
+
+std::unordered_map<uint64_t, bool> gServerOffhandUse;
+
+LL_TYPE_INSTANCE_HOOK(
+    OffhandStartUseHook,
+    HookPriority::Normal,
+    Player,
+    &Player::startUsingItem,
+    void,
+    ::ItemStack const& instance,
+    int                duration
+) {
+    if (!this->isLocalPlayer()) {
+        // 服务端侧（含本地整合服的 ServerPlayer 与客户端的 RemotePlayer）。
+        origin(instance, duration);
+        if (offhands::isUsingItem(*this)) {
+            gServerOffhandUse[this->getRuntimeID().rawID] = offhands::HandSwapScope::isActive(*this);
+        }
+        return;
+    }
+
+    // 标志重启传入的是选中槽物品本身的引用；输入发起的使用传入的是副本。
+    bool const fromFlag = &instance == &this->getSelectedItem();
+    auto const hand     = fromFlag ? gServerOffhandUse.find(this->getRuntimeID().rawID) : gServerOffhandUse.end();
+    if (hand == gServerOffhandUse.end() || !hand->second) {
+        origin(instance, duration);
+        return;
+    }
+
+    ItemStack const& offhandItem = offhands::getItem(*this);
+    Item const*      offhandType = offhandItem.mItem.get();
+    if (!offhands::hasItem(offhandItem) || offhandType == nullptr) {
+        return;
+    }
+    origin(offhandItem, offhandType->getMaxUseDuration(&offhandItem));
+    if (offhands::isUsingItem(*this)) {
+        offhands::setItemInUseSlotToOffhand(*this);
+    }
+}
+
+} // namespace
+
 void install() {
     OffhandItemTickHook::hook();
 #ifdef LL_PLAT_C
     OffhandLocalItemTickHook::hook();
 #endif
     OffhandReleaseUseHook::hook();
+    OffhandStartUseHook::hook();
 }
 
 void uninstall() {
+    OffhandStartUseHook::unhook();
     OffhandReleaseUseHook::unhook();
 #ifdef LL_PLAT_C
     OffhandLocalItemTickHook::unhook();
