@@ -15,6 +15,7 @@
 #include "mc/world/actor/provider/SynchedActorDataAccess.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/actor/player/PlayerItemInUse.h"
+#include "mc/world/ContainerID.h"
 #include "mc/world/gamemode/GameMode.h"
 #include "mc/world/gamemode/SurvivalMode.h"
 #include "mc/world/item/Item.h"
@@ -134,17 +135,27 @@ LL_TYPE_INSTANCE_HOOK(
 
     // 服务端使用中每刻会自动调 useItem。wasUsing 为真说明这次调用发生在使用期间，
     // 若 origin 把使用掐掉了也不能重启——否则快速点击时盾牌会反复闪起（僵尸重启循环）。
-    // startUsingItem 按「当前选中槽」记录使用来源；盾牌在副手容器里，必须让记录指向
-    // 副手，否则 normalTick 的「使用物品不在选中槽」检查会每刻把使用掐掉重启。
-    // HandSwapScope 内选中槽即副手，析构时把使用槽位改写到 Offhand 容器。
+    //
+    // 副手路径（外层已有 HandSwapScope，盾已被换到选中槽）：直接启动即可，
+    // 外层作用域析构时会把使用槽位改写到 Offhand 容器。
+    // 主手路径不能再套 HandSwapScope：交换会把盾换进副手槽，startUsingItem
+    // 记录的使用槽位对不上实物所在槽，normalTick 的「使用物品不在记录槽」检查
+    // 会在下一刻收盾（这正是主手盾「点按秒收、无法格挡」的根因）。
+    // 参考模组 FrederoxDev/Offhand 的 ShieldBlocking 也不交换，直接 startUsingItem。
     if (!wasUsing && isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
-        {
-            offhands::HandSwapScope scope(player);
-            player.startUsingItem(item, kShieldUseDuration);
+        bool const swapped = offhands::HandSwapScope::isActive(player);
+        player.startUsingItem(item, kShieldUseDuration);
+        if (!swapped && offhands::isUsingItem(player)) {
+            // 兜底：把使用槽位显式指向当前选中槽（startUsingItem 的槽位解析在
+            // 非原版调用路径下可能记录成 slot=0，导致 normalTick 每刻掐掉使用）。
+            auto& slot        = player.mItemInUse.get().mSlot.get();
+            slot.mSlot        = player.mInventory->mSelected;
+            slot.mContainerId = ::ContainerID::Inventory;
         }
-        // 日志放在 scope 析构后：此时使用槽位已被改写到副手容器。
-        debugLog(std::string("[hook] startUsingItem done ") + usingState(player));
+        debugLog(
+            std::string("[hook] startUsingItem done swapped=") + (swapped ? "1" : "0") + " " + usingState(player)
+        );
     }
 
     return used;
@@ -176,14 +187,18 @@ LL_TYPE_INSTANCE_HOOK(
 
     if (!wasUsing && isShield(type) && offhands::hasItem(item) && !offhands::isUsingItem(player)
         && !isOnCooldown(player, *type)) {
-        // 同 useItem 侧：在 HandSwapScope 内启动，让使用槽位记录到副手容器。
-        {
-            offhands::HandSwapScope scope(player);
-            player.startUsingItem(item, kShieldUseDuration);
+        // 同 useItem 侧：副手路径外层已有交换则直接启动；主手路径不交换，
+        // 启动后把使用槽位显式指向当前选中槽。
+        bool const swapped = offhands::HandSwapScope::isActive(player);
+        player.startUsingItem(item, kShieldUseDuration);
+        if (!swapped && offhands::isUsingItem(player)) {
+            auto& slot        = player.mItemInUse.get().mSlot.get();
+            slot.mSlot        = player.mInventory->mSelected;
+            slot.mContainerId = ::ContainerID::Inventory;
         }
         debugLog(
-            std::string("[hook] baseUseItem startUsingItem ")
-            + "item=" + itemName(type) + " " + usingState(player)
+            std::string("[hook] baseUseItem startUsingItem swapped=") + (swapped ? "1" : "0")
+            + " item=" + itemName(type) + " " + usingState(player)
         );
     }
 
