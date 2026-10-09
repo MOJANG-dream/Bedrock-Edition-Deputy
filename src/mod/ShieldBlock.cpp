@@ -206,6 +206,26 @@ LL_TYPE_INSTANCE_HOOK(
     return used;
 }
 
+// 双端：Java 版行为——主手攻击命中会放下正在格挡的盾（无论盾在主手还是副手）。
+// GameMode::attack 被 SurvivalMode 覆写，必须钩子类。
+LL_TYPE_INSTANCE_HOOK(
+    ShieldAttackHook,
+    HookPriority::Normal,
+    SurvivalMode,
+    &SurvivalMode::$attack,
+    bool,
+    ::Actor&      entity,
+    ::Vec3 const& hitPosition
+) {
+    bool const hit = origin(entity, hitPosition);
+
+    if (hit && modConfig().enableShieldRightClick && isUsingShield(mPlayer)) {
+        debugLog(std::string("[hook] attack cancels blocking ") + usingState(mPlayer));
+        mPlayer.stopUsingItem();
+    }
+    return hit;
+}
+
 // 双端：Java 版 Player#disableShield 会停止使用盾牌。Player::tryDisableShield 只启动冷却，
 // 客户端也会收到该冷却，因此每端在冷却开始时自行停止使用。
 LL_TYPE_INSTANCE_HOOK(
@@ -300,9 +320,11 @@ void install() {
     debugLog(std::string("[hook] install normalTick rc=") + std::to_string(ShieldBlockingTickHook::hook()));
     debugLog(std::string("[hook] install cooldown rc=") + std::to_string(ShieldStartCooldownHook::hook()));
     debugLog(std::string("[hook] install stopUsing rc=") + std::to_string(ShieldStopUsingHook::hook()));
+    debugLog(std::string("[hook] install attack rc=") + std::to_string(ShieldAttackHook::hook()));
 }
 
 void uninstall() {
+    ShieldAttackHook::unhook();
     ShieldStopUsingHook::unhook();
     ShieldStartCooldownHook::unhook();
     ShieldBlockingTickHook::unhook();
