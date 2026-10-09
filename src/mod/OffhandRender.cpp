@@ -123,7 +123,7 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
 
-    auto* component = player->getEntityContext().tryGetComponent<::ItemInUseComponent>();
+    auto component = player->getEntityContext().tryGetComponent<::ItemInUseComponent>();
     if (component != nullptr) {
         offhandUseDuration   = component->mDuration;
         hidingOffhandUse     = true;
