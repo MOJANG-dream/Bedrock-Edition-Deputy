@@ -305,6 +305,11 @@ Matrix computeHeldItemPose(
     return pose;
 }
 
+// 原版 _applyUseAnimation 对「使用中」物品做姿态变换；我的自绘绕过了它，
+// 因此把蓄力类物品的「举起」姿态补在 pose 组装里（参考模组在
+// _applyDefaultItemTransforms 期间靠 mirroringItemTransforms 自动镜像）。
+// 弩/三叉戟/矛/望远镜的抬升姿态原本就由其 JSON display 定义，不在此重复。
+
 LL_TYPE_INSTANCE_HOOK(
     OffhandItemRenderHook,
     HookPriority::Normal,
@@ -403,6 +408,40 @@ LL_TYPE_INSTANCE_HOOK(
     if (renderObjectCall != nullptr && mirroringFlatItem) {
         top.scale(-1.0f, -1.0f, 1.0f);
     }
+
+    worldMatrix.stack->_isDirty = true;
+    mTransform.get()            = top;
+}
+
+// 模型类物品（弩/三叉戟/矛/望远镜等）的 JSON 姿态变换也走同样的镜像，
+// 否则第一人称副手模型位置/朝向错误。
+LL_TYPE_INSTANCE_HOOK(
+    OffhandJsonTransformsHook,
+    HookPriority::Normal,
+    ItemInHandRenderer,
+    &ItemInHandRenderer::_transformWorldMatrixFromJson,
+    void,
+    ::MatrixStack::MatrixStackRef& worldMatrix,
+    ::ItemStack const&             item,
+    bool                           isMainHand,
+    ::ItemContextFlags             itemFlags,
+    float                          textureScale
+) {
+    if (!mirroringItemTransforms) {
+        origin(worldMatrix, item, isMainHand, itemFlags, textureScale);
+        return;
+    }
+
+    Matrix& top    = *worldMatrix.mat;
+    Matrix  parent = top;
+    top            = Matrix::IDENTITY();
+
+    origin(worldMatrix, item, isMainHand, itemFlags, textureScale);
+
+    Matrix const transforms = top;
+    top                     = parent;
+    Matrix flipped          = mirrored(transforms);
+    top._m.get()            = top._m.get() * flipped._m.get();
 
     worldMatrix.stack->_isDirty = true;
     mTransform.get()            = top;
@@ -547,6 +586,7 @@ LL_TYPE_INSTANCE_HOOK(
 
 void install() {
     OffhandDefaultTransformsHook::hook();
+    OffhandJsonTransformsHook::hook();
     OffhandItemRenderHook::hook();
     MainhandFirstPersonHook::hook();
     OffhandSetupAttachableHook::hook();
@@ -558,6 +598,7 @@ void uninstall() {
     OffhandSetupAttachableHook::unhook();
     MainhandFirstPersonHook::unhook();
     OffhandItemRenderHook::unhook();
+    OffhandJsonTransformsHook::unhook();
     OffhandDefaultTransformsHook::unhook();
 }
 
