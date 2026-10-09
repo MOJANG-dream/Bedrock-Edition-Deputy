@@ -248,7 +248,8 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
 
-    Matrix& top    = *worldMatrix.mat.get();
+    // MatrixStackRef 的 mat/stack 是 TypedStorage 退化的裸指针，直接用。
+    Matrix& top    = *worldMatrix.mat;
     Matrix  parent = top;
     top            = Matrix::IDENTITY();
 
