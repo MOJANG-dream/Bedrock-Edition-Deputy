@@ -213,9 +213,10 @@ HandSwapScope::~HandSwapScope() {
     exchange((*mInventoryItems)[mSelectedSlot], (*mHandItems)[kHandContainerOffhandSlot]);
 
     PlayerItemInUse& itemInUse = mPlayer.mItemInUse.get();
-    bool const       usingSelectedSlot = isUsingItem(mPlayer)
-        && itemInUse.mSlot.get().mContainerId == ContainerID::Inventory
-        && itemInUse.mSlot.get().mSlot == mSelectedSlot;
+    // 使用槽位只要指向 Inventory 容器（主手侧）就改写到 Offhand，不校验具体槽号：
+    // startUsingItem 的实现可能用 slot=0 而不是当前选中槽索引。
+    bool const usingSelectedSlot = isUsingItem(mPlayer)
+        && itemInUse.mSlot.get().mContainerId == ContainerID::Inventory;
     if (usingSelectedSlot && (mWasUsingOffhandItem || !mWasUsingItem)) {
         setItemInUseSlotToOffhand(mPlayer);
     }
