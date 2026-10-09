@@ -127,23 +127,25 @@ bool isModelUseAnimation(Item const* type) {
 }
 
 // 旧 tessellation 的方块按平面精灵渲染（参考模组 usesNewTessellation）。
+// 注意 ll::TypedStorage 对指针/bool/float/枚举等小类型退化为值本身（无 .get()），
+// 只有大对象（ItemStack/Matrix/容器等）才有 .get()。
 bool usesNewTessellation(::Block const& block) {
     auto& fallback = ::BlockGraphics::mVanillaBlocksWithFallbackToOldTessellation();
-    if (block.getBlockType().mDefaultState.get() != nullptr
-        && fallback.find(block.getBlockType().mDefaultState.get()->mNetworkId.get()) != fallback.end()) {
+    if (block.getBlockType().mDefaultState != nullptr
+        && fallback.find(block.getBlockType().mDefaultState->mNetworkId) != fallback.end()) {
         return false;
     }
-    return block.mDirectData.get().mUseNewTessellation.get();
+    return block.mDirectData.get().mUseNewTessellation;
 }
 
 // ClientBlockLogic::getItemDisplayTransform 的复刻。LL 头里 ClientBlockComponentDirectData
 // 是空结构，itemVisual 覆盖分支拿不到，直接读方块几何组件的 schematic。
 Matrix getItemDisplayTransform(::Block const& block, ItemTransformType type) {
-    auto const* geometry = block.mDirectData.get().mBlockGeometryComponent.get();
+    auto const* geometry = block.mDirectData.get().mBlockGeometryComponent;
     if (geometry != nullptr && geometry->mBlockSchematic.get() != nullptr) {
         auto const& transforms = geometry->mBlockSchematic.get()->mItemTransforms.get();
         auto        match      = std::find_if(transforms.begin(), transforms.end(), [type](auto const& transform) {
-            return transform.mType.get() == type;
+            return transform.mType == type;
         });
         if (match != transforms.end()) {
             return match->mTransform.get();
@@ -281,7 +283,7 @@ Matrix computeHeldItemPose(
     pose.translate(0.56f, -0.52f, -0.72f);
 
     float const height =
-        renderer.mOldHeightOffHand.get() + (renderer.mHeightOffHand.get() - renderer.mOldHeightOffHand.get()) * frameAlpha;
+        renderer.mOldHeightOffHand + (renderer.mHeightOffHand - renderer.mOldHeightOffHand) * frameAlpha;
     pose.translate(0.0f, -(1.0f - height) * 0.6f, 0.0f);
 
     pose.rotate(45.0f, 0.0f, 1.0f, 0.0f);
@@ -296,7 +298,7 @@ Matrix computeHeldItemPose(
     }
 
     Item const* type = item.mItem.get();
-    if (type != nullptr && type->mIsMirroredArt.get() && !useBlockTransforms) {
+    if (type != nullptr && type->mIsMirroredArt && !useBlockTransforms) {
         pose.rotate(180.0f, 0.0f, 1.0f, 0.0f);
     }
 
@@ -329,7 +331,7 @@ LL_TYPE_INSTANCE_HOOK(
 
     ::Block const* block               = item.getBlockForRendering();
     bool const     useBlockTransforms  = block != nullptr && usesNewTessellation(*block)
-        && ::BlockTessellator::canRender(::BlockGraphics::getForBlock(*block)->mBlockShape.get());
+        && ::BlockTessellator::canRender(::BlockGraphics::getForBlock(*block)->mBlockShape);
 
     float const  frameAlpha = renderContext.getFrameAlpha(player);
     Matrix const pose       = computeHeldItemPose(*this, player, item, block, useBlockTransforms, frameAlpha);
