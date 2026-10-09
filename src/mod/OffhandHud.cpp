@@ -193,17 +193,17 @@ void drawDurability(::MinecraftUIRenderContext& ctx, Box icon, float unit, ::Ite
 }
 
 void drawSlot(::MinecraftUIRenderContext& ctx, ::Player& player, Box slot) {
+    // 副手为空时整个槽位都不显示。
+    ::ItemStack const& source = offhands::getItem(player);
+    if (!offhands::hasItem(source)) {
+        return;
+    }
     float const unit = slot.h / kSlotUnits;
 
     // 槽位底纹：热键栏同款三段贴图（端帽半透明与热键栏两端一致）。
     drawTexture(ctx, "textures/ui/hotbar_start_cap", slot.x, slot.y, unit, slot.h, 0.65f);
     drawTexture(ctx, "textures/ui/hotbar_0", slot.x + unit, slot.y, 20 * unit, slot.h, 1.f);
     drawTexture(ctx, "textures/ui/hotbar_end_cap", slot.x + 21 * unit, slot.y, unit, slot.h, 0.65f);
-
-    ::ItemStack const& source = offhands::getItem(player);
-    if (!offhands::hasItem(source)) {
-        return;
-    }
 
     // 复制一份本帧专用：渲染器不能重放入手动画。
     ::ItemStack stack     = source;
