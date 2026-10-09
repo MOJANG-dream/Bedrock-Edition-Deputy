@@ -50,7 +50,13 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
 
-    fullStack->add(PackInstance{pack, 0, false, nullptr}, *repo, false);
+    // NonOwnerPointer<IResourcePackRepository const> 的模板构造函数用 const_cast 取地址，
+    // 不接受派生类（ResourcePackRepository）直接构造——需先显式转到基类引用。
+    fullStack->add(
+        PackInstance{pack, 0, false, nullptr},
+        static_cast<::IResourcePackRepository const&>(*repo),
+        false
+    );
 }
 
 } // namespace
