@@ -23,6 +23,7 @@
 #include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/deps/shared_types/legacy/item/UseAnimation.h"
+#include "mc/entity/components/ItemInUseComponent.h"
 #include "mc/world/actor/player/PlayerItemInUse.h"
 #include "mc/world/ContainerID.h"
 #include "mc/world/level/BlockPos.h"
@@ -218,10 +219,19 @@ LL_STATIC_HOOK(
     }
 
     if (newUseClick) {
+        // 诊断：打印 LocalPlayer 自身的使用状态（legacy/cid/ecs），
+        // 用于确认持续使用期间的点击为何没被 isUsingOffhandItem 吞掉。
+        auto const& inUse   = player->mItemInUse.get();
+        bool const  legacy  = !inUse.mItem.get().isNull();
+        int const   cid     = static_cast<int>(inUse.mSlot.get().mContainerId);
+        auto        comp    = player->getEntityContext().tryGetComponent<::ItemInUseComponent>();
+        int const   ecsDur  = comp ? comp->mDuration : -1;
         debugLog(
             std::string("[input] click intent=") + std::to_string(bai.mAction)
             + " hit=" + std::to_string(static_cast<int>(solidHitResult.mType))
             + " main=" + itemName(player->getSelectedItem()) + " off=" + itemName(offhands::getItem(*player))
+            + " legacy=" + (legacy ? "1" : "0") + " cid=" + std::to_string(cid)
+            + " ecsDur=" + std::to_string(ecsDur)
         );
     }
 

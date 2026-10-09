@@ -53,6 +53,8 @@ void debugLog(std::string const& line) {
 }
 
 // 同时打印「旧字段」「ECS 组件」与 USINGITEM 标志三个来源，用来确定哪一个才是权威状态。
+// 注意：Actor::isClientSide() 在本版头文件中是 `return !mLevel` 的占位实现，恒为 false，
+// 不能用来区分端；用 isLocalPlayer() 与对象指针区分 LocalPlayer / ServerPlayer。
 std::string usingState(::Player const& player) {
     auto        component = const_cast<::Player&>(player).getEntityContext().tryGetComponent<ItemInUseComponent>();
     int const   duration  = component ? component->mDuration : -1;
@@ -62,7 +64,8 @@ std::string usingState(::Player const& player) {
         const_cast<::Player&>(player).getEntityContext(),
         ActorFlags::Usingitem
     );
-    return std::string("side=") + (player.isClientSide() ? "c" : "s")
+    return std::string("local=") + (player.isLocalPlayer() ? "1" : "0")
+        + " this=" + std::to_string(reinterpret_cast<uintptr_t>(&player))
         + " ecsDur=" + std::to_string(duration) + " legacy=" + (legacy ? "1" : "0")
         + " cid=" + std::to_string(container) + " uf=" + (usingFlag ? "1" : "0");
 }
@@ -118,8 +121,8 @@ LL_TYPE_INSTANCE_HOOK(
     bool const used = origin(item, handSlot);
 
     debugLog(
-        std::string("[hook] useItem fired side=") + (player.isClientSide() ? "c" : "s")
-        + " item=" + itemName(type) + itemProps(type)
+        std::string("[hook] useItem fired ")
+        + "item=" + itemName(type) + itemProps(type)
         + " isShield=" + (isShield(type) ? "1" : "0") + " hasItem=" + (offhands::hasItem(item) ? "1" : "0")
         + " wasUsing=" + (wasUsing ? "1" : "0")
         + " cd=" + std::to_string(type != nullptr && isOnCooldown(player, *type) ? 1 : 0) + " " + usingState(player)
@@ -179,8 +182,8 @@ LL_TYPE_INSTANCE_HOOK(
             player.startUsingItem(item, kShieldUseDuration);
         }
         debugLog(
-            std::string("[hook] baseUseItem startUsingItem side=") + (player.isClientSide() ? "c" : "s")
-            + " item=" + itemName(type) + " " + usingState(player)
+            std::string("[hook] baseUseItem startUsingItem ")
+            + "item=" + itemName(type) + " " + usingState(player)
         );
     }
 

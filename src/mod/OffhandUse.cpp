@@ -13,6 +13,10 @@
 #include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
 
+#ifdef LL_PLAT_C
+#include "mc/client/player/LocalPlayer.h"
+#endif
+
 #include <fstream>
 #include <string>
 
@@ -85,6 +89,40 @@ void tickOffhandItemInUse(Player& player) {
     player.completeUsingItem();
 }
 
+// normalTick 钩子的共同实现：count 置零 → origin → 恢复 → 重放副手使用块语义。
+// LocalPlayer 与（经由基类 thunk 链到达的）ServerPlayer 各挂一个钩子调用本函数。
+//
+// gNormalTickPlayer 防止重复处理：LocalPlayer::normalTick 若内部链调基类
+// Player::normalTick，同一玩家的保护逻辑不能跑两遍（进食粒子/完成判定会加倍）。
+thread_local void* gNormalTickPlayer = nullptr;
+
+struct NormalTickGuard {
+    void* key;
+    explicit NormalTickGuard(void* p) : key(p) { gNormalTickPlayer = p; }
+    ~NormalTickGuard() { gNormalTickPlayer = nullptr; }
+};
+
+template <class PlayerT, class OriginFn>
+void runNormalTick(PlayerT& self, OriginFn&& origin) {
+    if (!offhands::isUsingOffhandItem(self) || offhands::HandSwapScope::isActive(self)) {
+        origin();
+        return;
+    }
+
+    ItemStack&  itemInUse = self.mItemInUse.get().mItem.get();
+    uchar const count     = itemInUse.mCount;
+    itemInUse.mCount      = 0;
+
+    origin();
+
+    if (!offhands::isUsingOffhandItem(self)) {
+        return;
+    }
+
+    itemInUse.mCount = count;
+    tickOffhandItemInUse(self);
+}
+
 LL_TYPE_INSTANCE_HOOK(
     OffhandItemTickHook,
     HookPriority::Normal,
@@ -92,24 +130,29 @@ LL_TYPE_INSTANCE_HOOK(
     &Player::$normalTick,
     void
 ) {
-    if (!offhands::isUsingOffhandItem(*this) || offhands::HandSwapScope::isActive(*this)) {
+    // 已被外层 LocalPlayer 钩子覆盖（基类链调用）时只透传。
+    if (gNormalTickPlayer == static_cast<void const*>(this)) {
         origin();
         return;
     }
-
-    ItemStack&  itemInUse = mItemInUse.get().mItem.get();
-    uchar const count     = itemInUse.mCount;
-    itemInUse.mCount      = 0;
-
-    origin();
-
-    if (!offhands::isUsingOffhandItem(*this)) {
-        return;
-    }
-
-    itemInUse.mCount = count;
-    tickOffhandItemInUse(*this);
+    runNormalTick(*this, [&] { origin(); });
 }
+
+#ifdef LL_PLAT_C
+// 关键：LocalPlayer 覆写了 normalTick（虚函数），挂基类 Player::$normalTick 的 thunk
+// 对 LocalPlayer 不触发——客户端的「使用物品不在选中槽」保护此前完全没运行，
+// 表现为副手使用被客户端每刻掐掉（矛蓄力几秒即取消、盾牌持续点击穿透）。
+LL_TYPE_INSTANCE_HOOK(
+    OffhandLocalItemTickHook,
+    HookPriority::Normal,
+    LocalPlayer,
+    &LocalPlayer::$normalTick,
+    void
+) {
+    NormalTickGuard guard(this);
+    runNormalTick(*this, [&] { origin(); });
+}
+#endif
 
 LL_TYPE_INSTANCE_HOOK(
     OffhandReleaseUseHook,
@@ -124,7 +167,15 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
 
-    debugLog(std::string("[use] releaseUsingItem side=") + (player.isClientSide() ? "c" : "s"));
+    // 诊断：记录松手时的蓄力时长，区分「玩家主动松手」与「使用被异常取消」。
+    auto        component = player.getEntityContext().tryGetComponent<ItemInUseComponent>();
+    int const   duration  = component ? component->mDuration : -1;
+    Item const* item      = player.mItemInUse.get().mItem.get().mItem.get();
+    debugLog(
+        std::string("[use] releaseUsingItem local=") + (player.isLocalPlayer() ? "1" : "0")
+        + " ecsDur=" + std::to_string(duration)
+        + " item=" + (item != nullptr ? item->mFullName->getString() : std::string("-"))
+    );
     offhands::HandSwapScope scope(player);
     origin();
 }
@@ -133,11 +184,17 @@ LL_TYPE_INSTANCE_HOOK(
 
 void install() {
     OffhandItemTickHook::hook();
+#ifdef LL_PLAT_C
+    OffhandLocalItemTickHook::hook();
+#endif
     OffhandReleaseUseHook::hook();
 }
 
 void uninstall() {
     OffhandReleaseUseHook::unhook();
+#ifdef LL_PLAT_C
+    OffhandLocalItemTickHook::unhook();
+#endif
     OffhandItemTickHook::unhook();
 }
 

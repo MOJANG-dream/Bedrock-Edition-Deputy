@@ -179,6 +179,7 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
     // 背包/容器界面悬停在玩家物品上：送入副手
     if (config.enableInventoryOffhand && inventory_actions::hasHoveredPlayerSlot()) {
         event.cancel();
+        menuDebugLog("[key] F -> hovered slot swap");
         runOnClientThread([] { inventory_actions::swapHoveredToOffhand(); });
         return;
     }
@@ -187,8 +188,10 @@ static void onKey(ll::event::input::KeyInputEvent& event) {
     auto clientInstance = ll::service::bedrock::getClientInstance();
     if (clientInstance && clientInstance->isInGameInputEnabled()) {
         event.cancel();
+        menuDebugLog("[key] F -> hotbar/offhand swap");
         runOnClientThread([] { inventory_actions::swapHotbarOffhand(); });
     } else {
+        menuDebugLog("[key] F ignored: in-game input disabled and no hovered slot");
         modLogger().debug("swap key pressed with no in-game input and no hovered player slot");
     }
 }

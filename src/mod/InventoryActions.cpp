@@ -5,6 +5,7 @@
 
 #include "ll/api/io/Logger.h"
 #include "ll/api/memory/Hook.h"
+#include "ll/api/mod/NativeMod.h"
 #include "ll/api/service/TargetedBedrock.h"
 
 #include "mc/client/game/ClientInstance.h"
@@ -25,8 +26,10 @@
 #include "mc/world/inventory/transaction/InventoryTransactionManager.h"
 #include "mc/world/item/ItemStack.h"
 
+#include <fstream>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 
 // 实现参考开源客户端模组 Lamium（LGPL-3.0，amatouhake/Lamium）的
 // InventoryMove.cpp 与 HoverTracker.cpp：物品移动一律走游戏自己的容器
@@ -39,6 +42,18 @@ ll::io::Logger& modLogger();
 namespace bedrock_edition_deputy::inventory_actions {
 
 namespace {
+
+// 临时诊断：F 交换静默失败点定位，追加到 offhand-debug.log。
+void swapDebugLog(std::string const& line) {
+    auto mod = ll::mod::NativeMod::current();
+    if (!mod) {
+        return;
+    }
+    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
+    if (out) {
+        out << line << '\n';
+    }
+}
 
 // ---------------------------------------------------------------------------
 // HUD 下的无界面移动：legacy inventory transaction + 原版容器 setter
@@ -98,18 +113,33 @@ LL_TYPE_INSTANCE_HOOK(
 
 // 让原版客户端 setter 记录动作，再刷出平衡的 InventoryTransaction。
 bool movePair(LocalPlayer& player, Location a, ItemStack const& newA, Location b, ItemStack const& newB) {
-    if (gMoving || !gMoveHookReady) {
+    if (gMoving) {
+        swapDebugLog("[swap] movePair bail: already moving");
+        return false;
+    }
+    if (!gMoveHookReady) {
+        swapDebugLog("[swap] movePair bail: addAction hook not installed");
         return false;
     }
     auto& manager = player.mTransactionManager.get();
     auto* base    = player.mItemStackNetManager.get();
     if (manager.mCurrentTransaction.get()) {
+        swapDebugLog("[swap] movePair bail: current transaction busy");
         return false;
     }
-    if (!base || !base->mIsEnabled || !base->mIsClientSide) {
+    if (!base) {
+        swapDebugLog("[swap] movePair bail: no ItemStackNetManager");
+        return false;
+    }
+    if (!base->mIsEnabled || !base->mIsClientSide) {
+        swapDebugLog(
+            std::string("[swap] movePair bail: net manager disabled enabled=")
+            + (base->mIsEnabled ? "1" : "0") + " client=" + (base->mIsClientSide ? "1" : "0")
+        );
         return false;
     }
     if (static_cast<ItemStackNetManagerClient*>(base)->mRequest.get()) {
+        swapDebugLog("[swap] movePair bail: stale mRequest still pending");
         return false;
     }
 
@@ -125,6 +155,7 @@ bool movePair(LocalPlayer& player, Location a, ItemStack const& newA, Location b
 
     auto scope = ItemStackNetManagerBase::_tryBeginClientLegacyTransactionRequest(&player);
     if (!base->mLegacyTransactionRequestId->mRawId) {
+        swapDebugLog("[swap] movePair bail: begin legacy transaction returned no request id");
         return false;
     }
 
@@ -156,8 +187,10 @@ bool movePair(LocalPlayer& player, Location a, ItemStack const& newA, Location b
         player.updateInventoryTransactions();
     }
     if (manager.mCurrentTransaction.get()) {
+        swapDebugLog("[swap] movePair bail: transaction stayed unbalanced");
         throw std::runtime_error("offhand move transaction stayed unbalanced");
     }
+    swapDebugLog("[swap] movePair ok");
     return true;
 }
 
@@ -247,17 +280,21 @@ LL_TYPE_INSTANCE_HOOK(
 } // namespace
 
 void swapHotbarOffhand() {
+    swapDebugLog("[swap] swapHotbarOffhand enter");
     auto clientInstance = ll::service::bedrock::getClientInstance();
     if (!clientInstance) {
+        swapDebugLog("[swap] bail: no client instance");
         return;
     }
     auto* player = clientInstance->getLocalPlayer();
     if (!player || player->isSpectator()) {
+        swapDebugLog("[swap] bail: no local player or spectator");
         return;
     }
 
     int selected = player->getSelectedItemSlot();
     if (selected < 0 || selected >= 9) {
+        swapDebugLog("[swap] bail: bad selected slot " + std::to_string(selected));
         return;
     }
 
@@ -267,12 +304,15 @@ void swapHotbarOffhand() {
     ItemStack held   = itemAt(*player, hand);
     ItemStack second = itemAt(*player, offhand);
     if (held.isNull() && second.isNull()) {
+        swapDebugLog("[swap] bail: both hands empty");
         return;
     }
 
     try {
-        movePair(*player, hand, second, offhand, held);
+        bool const ok = movePair(*player, hand, second, offhand, held);
+        swapDebugLog(std::string("[swap] swapHotbarOffhand result=") + (ok ? "ok" : "failed"));
     } catch (std::exception const&) {
+        swapDebugLog("[swap] swapHotbarOffhand threw (unbalanced)");
         // 事务无法平衡时不动任何状态；原版会在随后用库存同步纠正。
     }
 }
@@ -284,6 +324,7 @@ bool hasHoveredPlayerSlot() {
 }
 
 void swapHoveredToOffhand() {
+    swapDebugLog("[swap] swapHoveredToOffhand enter");
     Hovered target;
     {
         std::lock_guard lock(gHoverMutex);
