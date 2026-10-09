@@ -19,6 +19,7 @@
 #ifdef LL_PLAT_C
 
 #include "mod/InventoryActions.h"
+#include "mod/OffhandHud.h"
 #include "mod/OffhandInput.h"
 #include "mod/OffhandRender.h"
 #include "mod/SettingsScreen.h"
@@ -245,6 +246,7 @@ bool DeputyMod::enable() {
     // 仅客户端：输入、渲染、库存操作、设置界面、副手模型动画与资源包注入。
     offhand_input::install();
     offhand_render::install();
+    offhand_hud::install();
     inventory_actions::install();
     offhand_resource_pack::install();
     offhand_player_model::install();
@@ -279,6 +281,7 @@ bool DeputyMod::disable() {
     offhand_player_model::uninstall();
     offhand_resource_pack::uninstall();
     inventory_actions::uninstall();
+    offhand_hud::uninstall();
     offhand_render::uninstall();
     offhand_input::uninstall();
     altHeld.store(false, std::memory_order_relaxed);
