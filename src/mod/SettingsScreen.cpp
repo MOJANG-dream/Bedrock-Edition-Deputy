@@ -81,10 +81,11 @@ struct RowDef {
     const char* label;
     bool Config::*field;
 };
-constexpr std::array<RowDef, 3> kRows = {{
+constexpr std::array<RowDef, 4> kRows = {{
     {"交换主副手", &Config::enableSwapKey},
     {"盾牌右键格挡", &Config::enableShieldRightClick},
     {"背包内按键放入副手", &Config::enableInventoryOffhand},
+    {"显示副手槽位", &Config::enableOffhandSlot},
 }};
 
 struct KeyRowDef {
