@@ -14,6 +14,7 @@
 #include "mc/world/actor/provider/ActorEquipment.h"
 #include "mc/world/actor/provider/SynchedActorDataAccess.h"
 #include "mc/world/actor/player/Player.h"
+#include "mc/world/actor/player/PlayerInventory.h"
 #include "mc/world/actor/player/PlayerItemInUse.h"
 #include "mc/world/ContainerID.h"
 #include "mc/world/gamemode/GameMode.h"
