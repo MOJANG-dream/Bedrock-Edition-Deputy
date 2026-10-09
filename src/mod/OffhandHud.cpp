@@ -20,6 +20,7 @@
 #include "mc/client/gui/controls/VisualTree.h"
 #include "mc/client/gui/screens/ScreenView.h"
 #include "mc/client/options/IOptionRegistry.h"
+#include "mc/client/player/LocalPlayer.h"
 #include "mc/client/renderer/BaseActorRenderContext.h"
 #include "mc/client/renderer/actor/ItemRenderer.h"
 #include "mc/client/renderer/screen/MinecraftUIRenderContext.h"
@@ -156,10 +157,11 @@ void drawCount(::MinecraftUIRenderContext& ctx, Box icon, float unit, int count)
     float const bottom = icon.y + 18 * unit;
     float const width  = 30 * unit; // 足够宽，右对齐贴边即可
     auto        draw   = [&](float offset, mce::Color const& color) {
+        // drawText 收 std::string&&：阴影与正文各用一份拷贝。
         ctx.drawText(
             font,
             ::RectangleArea{right - width + offset, right + offset, bottom - 9 * unit + offset, bottom + offset},
-            text,
+            std::string(text),
             color,
             1.f,
             ::ui::TextAlignment::Right,
