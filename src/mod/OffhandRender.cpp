@@ -1,4 +1,4 @@
-// 仅客户端：副手第一人称渲染依赖客户端渲染器。服务端构建时本文件编译为空。
+// 仅客户端：副手第一人称渲染依赖客户端渲染器。服务端构建时本文件编译为空。// 仅客户端：副手第一人称渲染依赖客户端渲染器。服务端构建时本文件编译为空。
 #ifdef LL_PLAT_C
 
 #include "mod/OffhandRender.h"
@@ -34,7 +34,7 @@
 #include "mc/world/item/components/ComponentItem.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockType.h"
-#include "mc/world/level/block/components/BlockComponentDirectData.h"
+// 仅客户端：副手第一人称渲染依赖客户端渲染器。服务端构建时本文件编译为空。#include "mc/world/level/block/components/BlockComponentDirectData.h"
 #include "mc/world/level/block/components/BlockGeometryComponent.h"
 
 #include <algorithm>
@@ -71,7 +71,7 @@ using ItemTransformType = ::ClientBlockPipeline::ItemTransforms::Type;
 
 constexpr float PI = std::numbers::pi_v<float>;
 
-// BrushItem::SWING_DURATION。
+// 仅客户端：副手第一人称渲染依赖客户端渲染器。服务端构建时本文件编译为空。// BrushItem::SWING_DURATION。
 constexpr int kBrushSwingDuration = 20;
 
 // renderOffhandItem 只收到 renderFirstPerson flags 的一个子集。
