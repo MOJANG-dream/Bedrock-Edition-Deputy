@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <string>
 #include <utility>
 
 // 第一人称副手渲染，移植自参考模组 FrederoxDev/Offhand 的 OffhandRendering.cpp：
@@ -51,7 +52,8 @@
 //    把物品自身的显示变换一起镜像，否则位置/朝向错误；
 // 4. 平面精灵在镜像后会从背面显示，需要再 scale(-1,-1,1) 翻回。
 //    ItemRenderCall::mIsFlat 在本版 LeviLamina 头文件中未导出（空结构），
-//    改用「非方块且非模型类使用动画（盾/弓/弩/矛）」启发式判定平面物品；
+//    改用 isModelItem 判定（非方块且不是 3D 模型物品：盾/弓/弩/矛，以及按
+//    物品名兜底的三叉戟/矛/钓竿），模型物品不翻面；
 // 5. 方块按 ClientBlockPipeline 的物品显示变换摆放（fix space + JSON display），
 //    未导出的 ClientBlockComponentDirectData 分支跳过，直接读几何组件的 schematic；
 // 6. 弓的 attachable 恒绑右臂骨骼，第一人称副手弓需要镜像回左臂
@@ -124,6 +126,21 @@ bool isModelUseAnimation(Item const* type) {
     auto anim = type->mUseAnim;
     return anim == UseAnimation::Block || anim == UseAnimation::Bow || anim == UseAnimation::Crossbow
         || anim == UseAnimation::Spear;
+}
+
+// 有 3D 模型、但使用动画表达不出「是模型」的物品（三叉戟、矛、钓竿……
+// 它们在注册表里的 mUseAnim 可能是 None）。按物品名兜底，否则会被当成平面精灵
+// 去做 scale(-1,-1,1) 的翻面修正，整块几何体被翻转，第一人称副手里表现为
+// 「模型异常」（里外反、朝向错、贴图对面）。
+bool isModelItem(Item const* type) {
+    if (isModelUseAnimation(type)) {
+        return true;
+    }
+    if (type == nullptr) {
+        return false;
+    }
+    auto const& name = type->mFullName->getString();
+    return name == "minecraft:trident" || name == "minecraft:spear" || name == "minecraft:fishing_rod";
 }
 
 // 旧 tessellation 的方块按平面精灵渲染（参考模组 usesNewTessellation）。
@@ -353,8 +370,8 @@ LL_TYPE_INSTANCE_HOOK(
     }
 
     mirroringItemTransforms = true;
-    // 平面精灵启发式：非方块、且不是盾/弓/弩/矛这类模型物品。
-    mirroringFlatItem = !useBlockTransforms && !isModelUseAnimation(item.mItem.get());
+    // 平面精灵启发式：非方块、且不是模型物品（盾/弓/弩/矛/三叉戟/钓竿……）。
+    mirroringFlatItem = !useBlockTransforms && !isModelItem(item.mItem.get());
     renderItem(
         renderContext, player, item, false,
         firstPersonItemFlags != ::ItemContextFlags::None ? firstPersonItemFlags : itemFlags,
