@@ -38,9 +38,6 @@ using SharedTypes::Legacy::UseAnimation;
 constexpr int kFeedParticleDuration = 26;
 constexpr int kFeedParticleInterval = 4;
 
-// 物品没有可用的使用时长时的兜底值（Java 版 ShieldItem/TridentItem 的 72000，约 1 小时）。
-constexpr int kFallbackUseDuration = 72000;
-
 void debugLog(std::string const& line) { appendDebugLog(line); }
 
 bool hasFeedingAnimation(UseAnimation animation) {
@@ -196,20 +193,27 @@ LL_TYPE_INSTANCE_HOOK(
     void
 ) {
     Player& player = mPlayer;
-    if (offhands::HandSwapScope::isActive(player) || !offhands::isUsingOffhandItem(player)) {
+
+    // 诊断：区分「按副手语义转发的松开」与「原样透传」。丢松开事务时，这两个分支
+    // 哪一个被走到、以及此刻使用槽位指向哪只手，是唯一能定位的证据。
+    bool const offhandUse = offhands::isUsingOffhandItem(player);
+    bool const scopeActive = offhands::HandSwapScope::isActive(player);
+    auto       component  = player.getEntityContext().tryGetComponent<ItemInUseComponent>();
+    int const  duration   = component ? component->mDuration : -1;
+    Item const* item      = player.mItemInUse.get().mItem.get().mItem.get();
+    std::string const where =
+        std::string("[use] releaseUsingItem local=") + (player.isLocalPlayer() ? "1" : "0")
+        + " ecsDur=" + std::to_string(duration)
+        + " item=" + (item != nullptr ? item->mFullName->getString() : std::string("-"))
+        + " offhandUse=" + (offhandUse ? "1" : "0") + " scope=" + (scopeActive ? "1" : "0")
+        + " cid=" + std::to_string(static_cast<int>(player.mItemInUse.get().mSlot.get().mContainerId));
+    debugLog(where);
+
+    if (scopeActive || !offhandUse) {
         origin();
         return;
     }
 
-    // 诊断：记录松手时的蓄力时长，区分「玩家主动松手」与「使用被异常取消」。
-    auto        component = player.getEntityContext().tryGetComponent<ItemInUseComponent>();
-    int const   duration  = component ? component->mDuration : -1;
-    Item const* item      = player.mItemInUse.get().mItem.get().mItem.get();
-    debugLog(
-        std::string("[use] releaseUsingItem local=") + (player.isLocalPlayer() ? "1" : "0")
-        + " ecsDur=" + std::to_string(duration)
-        + " item=" + (item != nullptr ? item->mFullName->getString() : std::string("-"))
-    );
     offhands::HandSwapScope scope(player);
     origin();
 }
@@ -281,14 +285,17 @@ LL_TYPE_INSTANCE_HOOK(
         origin(instance, duration);
         return;
     }
-    // 标志里带过来的是「剩余时长」，短促点击时它可能已经是 0。用 0 重启的话这次
-    // 使用在客户端会立刻结束，客户端也就再不会发出松开事务，服务端一直停在
-    // 「举盾中」——表现正是快速点一下右键后盾牌举起来放不下。时长缺失时退回
-    // 物品自身的时长，再退到 Java 版的 72000，保证重启出来的是一个真正在进行
-    // 的使用状态。
-    int useDuration = duration > 0 ? duration : offhandType->getMaxUseDuration(&offhandItem);
+    // 标志里带过来的是「剩余时长」。时长缺失时退回物品自身的时长。
+    //
+    // 绝不能在这里造一个假的 72000：钓鱼竿这类瞬发物品的时长本来就是 0（抛投只挂一个
+    // 空的使用状态，收杆靠第二次点击），给它补 72000 会让它变成「持续使用中」，下一次
+    // tick 的松开立刻回调物品的收杆逻辑——表现就是抛出即收回、并且之后每刻空转
+    // stopUsingItem。时长真的为 0 时按原版语义转交 origin，并清掉手别记录。
+    int const useDuration = duration > 0 ? duration : offhandType->getMaxUseDuration(&offhandItem);
     if (useDuration <= 0) {
-        useDuration = kFallbackUseDuration;
+        origin(instance, duration);
+        gServerOffhandUse.erase(this->getRuntimeID().rawID);
+        return;
     }
     origin(offhandItem, useDuration);
     if (offhands::isUsingItem(*this)) {
@@ -302,15 +309,15 @@ LL_TYPE_INSTANCE_HOOK(
 } // namespace
 
 void install() {
-    OffhandItemTickHook::hook();
+    reportHook("OffhandUse::Player::normalTick", OffhandItemTickHook::hook());
 #ifdef LL_PLAT_C
-    OffhandLocalItemTickHook::hook();
+    reportHook("OffhandUse::LocalPlayer::normalTick", OffhandLocalItemTickHook::hook());
 #endif
-    OffhandReleaseUseHook::hook();
+    reportHook("OffhandUse::GameMode::releaseUsingItem", OffhandReleaseUseHook::hook());
     // 与 ShieldBlock 的 Player::stopUsingItem 钩子并存（多钩子按优先级串行），
     // 注册失败要能在日志里看到，否则「手别记录」会一直不清。
     reportHook("OffhandUse::Player::stopUsingItem", OffhandStopUseHook::hook());
-    OffhandStartUseHook::hook();
+    reportHook("OffhandUse::Player::startUsingItem", OffhandStartUseHook::hook());
 }
 
 void uninstall() {
