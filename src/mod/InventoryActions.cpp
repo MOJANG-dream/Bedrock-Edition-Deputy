@@ -3,6 +3,8 @@
 
 #include "mod/InventoryActions.h"
 
+#include "mod/DebugLog.h"
+
 #include "ll/api/io/Logger.h"
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
@@ -26,7 +28,6 @@
 #include "mc/world/inventory/transaction/InventoryTransactionManager.h"
 #include "mc/world/item/ItemStack.h"
 
-#include <fstream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -43,17 +44,8 @@ namespace bedrock_edition_deputy::inventory_actions {
 
 namespace {
 
-// 临时诊断：F 交换静默失败点定位，追加到 offhand-debug.log。
-void swapDebugLog(std::string const& line) {
-    auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
-        return;
-    }
-    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
-    if (out) {
-        out << line << '\n';
-    }
-}
+// 临时诊断：F 交换静默失败点定位（仅 enableDebugLog 打开时写盘）。
+void swapDebugLog(std::string const& line) { appendDebugLog(line); }
 
 // ---------------------------------------------------------------------------
 // HUD 下的无界面移动：legacy inventory transaction + 原版容器 setter

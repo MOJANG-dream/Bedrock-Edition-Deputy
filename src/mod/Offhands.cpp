@@ -1,5 +1,7 @@
 #include "mod/Offhands.h"
 
+#include "mod/DebugLog.h"
+
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
 
@@ -22,7 +24,6 @@
 #include "mc/world/item/registry/ItemRegistry.h"
 #include "mc/world/item/registry/ItemRegistryRef.h"
 
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -39,16 +40,7 @@ namespace {
 // 不同玩家的作用域可以嵌套，因此每次查询都沿链条上溯。
 thread_local HandSwapScope* gActiveScope = nullptr;
 
-void debugLog(std::string const& line) {
-    auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
-        return;
-    }
-    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
-    if (out) {
-        out << line << '\n';
-    }
-}
+void debugLog(std::string const& line) { appendDebugLog(line); }
 
 void exchange(ItemStack& lhs, ItemStack& rhs) {
     ItemStack temporary = lhs;

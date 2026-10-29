@@ -13,6 +13,7 @@
 #include "mc/client/game/IMinecraftGame.h"
 #include "mc/client/gui/CaretMeasureData.h"
 #include "mc/client/gui/Font.h"
+#include "mc/client/gui/FontHandle.h"
 #include "mc/client/gui/FontRepository.h"
 #include "mc/client/gui/TextAlignment.h"
 #include "mc/client/gui/TextMeasureData.h"
@@ -37,6 +38,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -51,10 +53,6 @@
 //    hotbar_end_cap）；
 // 4. 物品图标用 ItemRenderer::renderGuiItemNew 画（与背包内图标同一管线），
 //    另画耐久条与堆叠数；指南针/时钟按物品动画帧取值。
-
-namespace bedrock_edition_deputy {
-Config& modConfig();
-}
 
 namespace bedrock_edition_deputy::offhand_hud {
 

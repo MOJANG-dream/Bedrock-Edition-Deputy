@@ -1,5 +1,6 @@
 #include "mod/OffhandUse.h"
 
+#include "mod/DebugLog.h"
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
@@ -18,7 +19,6 @@
 #include "mc/client/player/LocalPlayer.h"
 #endif
 
-#include <fstream>
 #include <string>
 #include <unordered_map>
 
@@ -38,16 +38,7 @@ using SharedTypes::Legacy::UseAnimation;
 constexpr int kFeedParticleDuration = 26;
 constexpr int kFeedParticleInterval = 4;
 
-void debugLog(std::string const& line) {
-    auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
-        return;
-    }
-    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
-    if (out) {
-        out << line << '\n';
-    }
-}
+void debugLog(std::string const& line) { appendDebugLog(line); }
 
 bool hasFeedingAnimation(UseAnimation animation) {
     return animation == UseAnimation::Eat || animation == UseAnimation::Drink
@@ -70,11 +61,14 @@ void tickOffhandItemInUse(Player& player) {
         itemInUse.mItem.get() = offhandItem;
     }
 
-    bool const clientSide = player.isClientSide();
-    auto const component  = player.getEntityContext().tryGetComponent<ItemInUseComponent>();
-    Item const* item      = offhandItem.mItem.get();
+    // 注意：不能用 Actor::isClientSide() 区分端——本版头文件里它是 `return !mLevel`
+    // 的占位实现，恒为 false（参见 ShieldBlock.cpp 中的同一说明），会让进食粒子与
+    // 客户端 eat 预测永远不执行。这里要的正是「本地客户端」这一侧，用 isLocalPlayer()。
+    bool const localClient = player.isLocalPlayer();
+    auto const component   = player.getEntityContext().tryGetComponent<ItemInUseComponent>();
+    Item const* item       = offhandItem.mItem.get();
 
-    if (clientSide && component != nullptr && component->mDuration < kFeedParticleDuration
+    if (localClient && component != nullptr && component->mDuration < kFeedParticleDuration
         && component->mDuration % kFeedParticleInterval == 0 && hasFeedingAnimation(item->mUseAnim)) {
         player.feed(offhandItem.getIdAux());
     }
@@ -83,7 +77,7 @@ void tickOffhandItemInUse(Player& player) {
         return;
     }
 
-    if (clientSide && item->isFood()) {
+    if (localClient && item->isFood()) {
         player.eat(offhandItem);
     }
 
@@ -111,17 +105,38 @@ void runNormalTick(PlayerT& self, OriginFn&& origin) {
         return;
     }
 
-    ItemStack&  itemInUse = self.mItemInUse.get().mItem.get();
-    uchar const count     = itemInUse.mCount;
-    itemInUse.mCount      = 0;
+    ItemStack&        itemInUse = self.mItemInUse.get().mItem.get();
+    Item const* const itemType  = itemInUse.mItem.get();
+    uchar const       count     = itemInUse.mCount;
+    itemInUse.mCount            = 0;
+
+    // 无论 origin 之后使用状态变成什么样都必须恢复 count：count 为 0 的堆叠在
+    // 原版看来就是空物品（isNull/hasItem 都看 count），一旦泄漏到「使用中」的
+    // 物品上，手上的物品就会消失。只在堆叠仍是同一个物品时恢复，避免把旧数量
+    // 写到 origin 换进来的另一个物品上。
+    struct CountRestore {
+        ItemStack&  stack;
+        Item const* type;
+        uchar       count;
+
+        void restore() {
+            if (type != nullptr && stack.mItem.get() == type) {
+                stack.mCount = count;
+            }
+            type = nullptr; // 只恢复一次
+        }
+        ~CountRestore() { restore(); }
+    } restore{itemInUse, itemType, count};
 
     origin();
+
+    // 先恢复再继续：下面的完成判定/物品同步必须看到真实数量。
+    restore.restore();
 
     if (!offhands::isUsingOffhandItem(self)) {
         return;
     }
 
-    itemInUse.mCount = count;
     tickOffhandItemInUse(self);
 }
 
@@ -221,6 +236,10 @@ LL_TYPE_INSTANCE_HOOK(
     ItemStack const& offhandItem = offhands::getItem(*this);
     Item const*      offhandType = offhandItem.mItem.get();
     if (!offhands::hasItem(offhandItem) || offhandType == nullptr) {
+        // 副手是空的：没有可以重启的使用，按原版处理。这里必须转交 origin，
+        // 否则这次 startUsingItem 被整个吞掉，USINGITEM 标志会指向一个从未
+        // 开始的使用状态。
+        origin(instance, duration);
         return;
     }
     origin(offhandItem, offhandType->getMaxUseDuration(&offhandItem));

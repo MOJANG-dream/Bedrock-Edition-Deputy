@@ -1,6 +1,7 @@
 #include "mod/DeputyMod.h"
 
 #include "mod/Config.h"
+#include "mod/DebugLog.h"
 #include "mod/OffhandPlayerModel.h"
 #include "mod/OffhandResourcePack.h"
 #include "mod/OffhandSync.h"
@@ -12,7 +13,6 @@
 #include "ll/api/io/Logger.h"
 #include "ll/api/mod/RegisterHelper.h"
 
-#include <fstream>
 #include <string>
 
 // 以下为仅客户端的部分：输入、渲染、设置界面与玩家模型动画。
@@ -60,17 +60,8 @@ std::atomic<bool>            swapKeyHeld{false}; // 边沿触发：忽略长按�
 std::atomic<bool>            menuKeyHeld{false};
 std::vector<ll::event::ListenerPtr> listeners;
 
-// 临时诊断：菜单链路追踪，追加到 <模组目录>/offhand-debug.log。
-void menuDebugLog(std::string const& line) {
-    auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
-        return;
-    }
-    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
-    if (out) {
-        out << line << '\n';
-    }
-}
+// 诊断：菜单链路追踪，仅在 enableDebugLog 打开时写入（见 mod/DebugLog.h）。
+void menuDebugLog(std::string const& line) { appendDebugLog(line); }
 
 // Alt 是系统修饰键，游戏/事件层可能不投递它自身的按下事件，
 // 导致 altHeld 永远为 false（Alt+F 打不开菜单）。这里直接读 Win32 异步键态兜底。
@@ -212,14 +203,6 @@ bool DeputyMod::load() {
     auto& logger = getSelf().getLogger();
     logger.debug("Loading...");
 
-    // 每次开启游戏都清空诊断日志，保证日志只包含本次会话。
-    {
-        std::ofstream out(getSelf().getModDir() / "offhand-debug.log", std::ios::trunc);
-        if (out) {
-            out << "== bedrock-edition-deputy offhand debug ==\n";
-        }
-    }
-
     const auto& configFilePath = getSelf().getConfigDir() / "config.json";
     if (!ll::config::loadConfig(config, configFilePath)) {
         logger.warn("Cannot load configurations from {}", configFilePath);
@@ -227,6 +210,10 @@ bool DeputyMod::load() {
             logger.error("Cannot save default configurations to {}", configFilePath);
         }
     }
+
+    // 每次开启游戏都清空诊断日志，保证日志只包含本次会话。必须放在读取配置之后：
+    // 是否记录由 config.enableDebugLog 决定，未开启时不会创建日志文件。
+    resetDebugLog();
 
     return true;
 }

@@ -4,6 +4,7 @@
 #include "mod/SettingsScreen.h"
 
 #include "mod/Config.h"
+#include "mod/DebugLog.h"
 
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/client/ClientExitLevelEvent.h"
@@ -39,20 +40,18 @@
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <fstream>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 // 界面实现方式参考开源客户端模组 Lamium（LGPL-3.0，amatouhake/Lamium）：
 // 借用原版 CommonDialogInfoScreen 取得焦点与鼠标独占（无 form id / 网络包 /
 // 服务端回调），所有内容在 BeforeUIRenderEvent 中用原生 2D 原语自绘，
 // 鼠标点击入队后在渲染帧消费，避免跨线程操作容器/界面。
-
-namespace bedrock_edition_deputy {
-Config& modConfig();
-}
 
 namespace bedrock_edition_deputy::settings_screen {
 
@@ -140,17 +139,8 @@ std::function<void()>             gSaveCallback;
 float                         gInvScale{1.f};
 int                           gCapturing{-1}; // 正在捕获键位的键绑定行下标（kKeyRows），-1 表示未捕获
 
-// 临时诊断：菜单链路追踪，追加到 <模组目录>/offhand-debug.log。
-void menuDebugLog(std::string const& line) {
-    auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
-        return;
-    }
-    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
-    if (out) {
-        out << line << '\n';
-    }
-}
+// 临时诊断：菜单链路追踪（仅 enableDebugLog 打开时写盘）。
+void menuDebugLog(std::string const& line) { appendDebugLog(line); }
 
 // ---------------------------------------------------------------------------
 // 绘制原语
@@ -512,9 +502,9 @@ bool isCapturingKey() {
 void setSaveCallback(std::function<void()> callback) { gSaveCallback = std::move(callback); }
 
 void install() {
-    menuDebugLog(std::string("[menu] hook render rc=") + std::to_string(SceneRenderHook::hook()));
-    menuDebugLog(std::string("[menu] hook exit rc=") + std::to_string(SceneExitHook::hook()));
-    menuDebugLog(std::string("[menu] hook bg rc=") + std::to_string(SceneBackgroundHook::hook()));
+    reportHook("SettingsScreen::UIScene::render", SceneRenderHook::hook());
+    reportHook("SettingsScreen::UIScene::onScreenExit", SceneExitHook::hook());
+    reportHook("SettingsScreen::UIScene::renderGameBehind", SceneBackgroundHook::hook());
 
     auto& bus = EventBus::getInstance();
     gListeners.clear();
@@ -630,11 +620,21 @@ void uninstall() {
         bus.removeListener(listener);
     }
     gListeners.clear();
+
+    {
+        std::lock_guard lock(gMutex);
+        // 面板还开着就被停用/卸载时，借来的原版对话框必须跟着退出：下面马上会
+        // 卸载 Scene hooks，之后没人再取消它的渲染与输入，它会变成一个关不掉的
+        // 空对话框一直留在屏幕上。
+        if (gScene && gClient && ownsTop() && !gClosing) {
+            gClient->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
+        }
+        clearLocked();
+    }
+
     SceneBackgroundHook::unhook();
     SceneExitHook::unhook();
     SceneRenderHook::unhook();
-    std::lock_guard lock(gMutex);
-    clearLocked();
 }
 
 } // namespace bedrock_edition_deputy::settings_screen

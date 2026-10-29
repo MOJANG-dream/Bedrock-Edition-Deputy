@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- 副手「使用中」物品的数量会泄漏成 0：`normalTick` 的 count 置零技巧在 `origin` 之后使用状态发生变化时不再恢复，手上的物品会消失；改为作用域结束必定恢复，且只在堆叠仍是同一物品时恢复。
+- 副手为空时重启使用状态会吞掉原版 `startUsingItem`：改为在副手没有物品时转交原版处理，避免 USINGITEM 标志指向一次从未开始的使用。
+- 副手进食/饮用没有粒子音效与客户端预测：`Actor::isClientSide()` 在本版头文件里是恒为 false 的占位实现，改用 `isLocalPlayer()` 判断本地客户端。
+- 面板打开时停用模组会把借用的原版对话框留在屏幕上且关不掉：卸载时先退出该场景，再卸载 Scene 钩子。
+- 诊断日志此前始终开启：输入、格挡、交换等热路径每次调用都会打开文件追加，服务端「使用中」每刻都在写盘；现在默认关闭，仅在 `config.json` 的 `enableDebugLog` 为真时写入 `offhand-debug.log`，并把 7 份重复实现合并到 `mod/DebugLog.h`。
+- 钩子注册失败此前只写进诊断日志（现默认关闭，等于静默失效）：改为通过 `reportHook()` 以错误级别写模组日志。
+
+### Changed
+
+- `tooth.json` 按 lip 约定修正变体：服务端变体 `label` 为空，客户端变体依赖 `LeviLamina#client` 并安装到 `mods/`（此前客户端也装到 `plugins/`，且依赖的是服务端包）。
+- `README.md` 修正安装命令（客户端用 `#client` 而非 `@server`），补全 `config.json` 字段（`enableOffhandSlot`、`enableDebugLog`）与副手槽位 HUD 的功能说明。
+- 配置结构升级到 `version: 7`（新增 `enableDebugLog`，旧配置可直接沿用，新增项取默认值）。
+
 ## [1.0.0] - 2026-10-10
 
 ### Added

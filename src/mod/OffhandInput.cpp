@@ -4,6 +4,7 @@
 #include "mod/OffhandInput.h"
 
 #include "mod/Config.h"
+#include "mod/DebugLog.h"
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
@@ -30,17 +31,12 @@
 #include "mc/world/phys/HitResultType.h"
 
 #include <chrono>
-#include <fstream>
 #include <memory>
 #include <string>
 
 // Java 版 Minecraft#startUseItem 的手部迭代逻辑：先试主手，主手没有消耗这次点击时，
 // 再在 HandSwapScope 内对副手重试同一套 GameMode 调用。原版该管线只认主手，因此
 // 在 ClientInputCallbacks::handleBuildAction 外面套一层。
-
-namespace bedrock_edition_deputy {
-Config& modConfig();
-}
 
 namespace bedrock_edition_deputy::offhand_input {
 
@@ -92,28 +88,8 @@ std::string itemName(ItemStack const& stack) {
     return offhands::hasItem(stack) && item != nullptr ? item->mFullName->getString() : std::string("-");
 }
 
-// 临时诊断：按行追加到 <模组目录>/offhand-debug.log，方便把现场交给开发者定位。
-void debugLog(std::string const& line) {
-    auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
-        return;
-    }
-    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
-    if (out) {
-        out << line << '\n';
-    }
-}
-
-void resetDebugLog() {
-    auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
-        return;
-    }
-    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::trunc);
-    if (out) {
-        out << "== bedrock-edition-deputy offhand debug ==\n";
-    }
-}
+// 临时诊断：按行追加到 <模组目录>/offhand-debug.log（仅 enableDebugLog 打开时）。
+void debugLog(std::string const& line) { appendDebugLog(line); }
 
 // 副手动作的节流窗口。
 bool offhandActionAllowed() {
@@ -355,7 +331,7 @@ LL_TYPE_INSTANCE_HOOK(
 } // namespace
 
 void install() {
-    resetDebugLog();
+    bedrock_edition_deputy::resetDebugLog();
     HandleBuildActionHook::hook();
     OffhandBuildBlockHook::hook();
     OffhandInteractHook::hook();

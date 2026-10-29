@@ -9,6 +9,7 @@
 - **副手物品使用**（Java 语义）：右键时若主手物品未消耗这次点击（空手、无法使用的物品或交互失败），自动尝试使用副手物品——进食、喝药水、抛/收钓鱼竿、拉弓、举矛等均可在副手完成；副手使用期间会吞掉后续点击，与 Java 版行为一致。
 - **盾牌右键格挡**：盾牌在任意一只手时按住右键即可举盾格挡（点按即生效），减速、动画与服务端伤害判定与原版一致；不再需要潜行触发。
 - **副手模型渲染**：第三人称下其他玩家/生物可见副手持物姿态（Molang `variable.offhand_*` 动画驱动），第一人称下自绘副手物品与使用动画，均镜像 Java 版表现。
+- **副手槽位 HUD**：热键栏左侧显示副手物品图标、耐久条与堆叠数，副手为空时不显示（可在设置界面关闭）。
 - **Alt+F 图形配置界面**：游戏内按 Alt+F 打开独立设置窗口，点击开关即时切换功能并保存。
 
 ## 使用指南
@@ -28,12 +29,14 @@
 
 ```json
 {
-    "version": 5,
+    "version": 7,
     "enableSwapKey": true,
     "swapKey": 70,
     "menuKey": 70,
     "enableShieldRightClick": true,
-    "enableInventoryOffhand": true
+    "enableInventoryOffhand": true,
+    "enableOffhandSlot": true,
+    "enableDebugLog": false
 }
 ```
 
@@ -42,6 +45,8 @@
 - `menuKey`：配合 Alt 打开图形配置界面的键码（默认 `70`，即 F 键）。
 - `enableShieldRightClick`：是否启用盾牌右键格挡。
 - `enableInventoryOffhand`：是否启用背包界面悬停物品按 F 送入副手。
+- `enableOffhandSlot`：是否在热键栏左侧显示副手槽位。
+- `enableDebugLog`：是否把诊断日志写入模组目录下的 `offhand-debug.log`（默认关闭）。排查问题时打开，复现一次后关闭即可；关闭时不会产生任何磁盘写入。
 
 ## 构建
 
@@ -60,9 +65,11 @@ xmake
 - **lip/tooth 安装**（推荐）：
 
 ```powershell
-lip install github.com/MOJANG-dream/Bedrock-Edition-Deputy        # 客户端变体
-lip install github.com/MOJANG-dream/Bedrock-Edition-Deputy@server # 服务端变体
+lip install github.com/MOJANG-dream/Bedrock-Edition-Deputy          # 服务端变体（label 为空）
+lip install github.com/MOJANG-dream/Bedrock-Edition-Deputy#client   # 客户端变体
 ```
+
+客户端变体按 lip 约定安装到 `mods/`，并依赖 `LeviLamina#client`；服务端变体安装到 `plugins/`。
 
 - **手动安装**：从 Releases 下载对应变体的 zip（`Bedrock-Edition-Deputy-client-windows-x64.zip` 或 `-server-`），解压后将 `bedrock-edition-deputy/` 目录放入 LeviLamina 的 `plugins/` 目录（LeviLauncher 用户为版本目录下的 `mods/`）。
 

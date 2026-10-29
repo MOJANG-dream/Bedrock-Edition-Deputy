@@ -1,6 +1,7 @@
 #include "mod/ShieldBlock.h"
 
 #include "mod/Config.h"
+#include "mod/DebugLog.h"
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
@@ -22,17 +23,12 @@
 #include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
 
-#include <fstream>
 #include <string>
 
 // 基岩版服务端只在「潜行」时判定格挡，且盾牌自身从不进入「使用中」状态。
 // 这里改为完全按 Java 版语义驱动：右键开始使用盾牌，服务端每刻根据
 // 「是否正在使用盾牌且未冷却」重算 BLOCKING 标志，不再伪造潜行。
 // 因此本地视角、碰撞箱、移动输入与右键交互全部保持原样。
-
-namespace bedrock_edition_deputy {
-Config& modConfig();
-}
 
 namespace bedrock_edition_deputy::shield_block {
 
@@ -43,16 +39,7 @@ using SharedTypes::Legacy::UseAnimation;
 // Java 版 ShieldItem#getUseDuration（约 1 小时，等于无限）。
 constexpr int kShieldUseDuration = 72000;
 
-void debugLog(std::string const& line) {
-    auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
-        return;
-    }
-    std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
-    if (out) {
-        out << line << '\n';
-    }
-}
+void debugLog(std::string const& line) { appendDebugLog(line); }
 
 // 同时打印「旧字段」「ECS 组件」与 USINGITEM 标志三个来源，用来确定哪一个才是权威状态。
 // 注意：Actor::isClientSide() 在本版头文件中是 `return !mLevel` 的占位实现，恒为 false，
@@ -315,12 +302,14 @@ LL_TYPE_INSTANCE_HOOK(
 } // namespace
 
 void install() {
-    debugLog(std::string("[hook] install useItem rc=") + std::to_string(ShieldUseItemHook::hook()));
-    debugLog(std::string("[hook] install baseUseItem rc=") + std::to_string(ShieldBaseUseItemHook::hook()));
-    debugLog(std::string("[hook] install normalTick rc=") + std::to_string(ShieldBlockingTickHook::hook()));
-    debugLog(std::string("[hook] install cooldown rc=") + std::to_string(ShieldStartCooldownHook::hook()));
-    debugLog(std::string("[hook] install stopUsing rc=") + std::to_string(ShieldStopUsingHook::hook()));
-    debugLog(std::string("[hook] install attack rc=") + std::to_string(ShieldAttackHook::hook()));
+    // 注册失败必须以错误级别报出来（诊断日志默认关闭），否则一版游戏更新之后
+    // 这些钩子会静默失效，表现成「格挡突然不管用」。
+    reportHook("ShieldBlock::SurvivalMode::useItem", ShieldUseItemHook::hook());
+    reportHook("ShieldBlock::GameMode::baseUseItem", ShieldBaseUseItemHook::hook());
+    reportHook("ShieldBlock::ServerPlayer::normalTick", ShieldBlockingTickHook::hook());
+    reportHook("ShieldBlock::Player::startItemCooldown", ShieldStartCooldownHook::hook());
+    reportHook("ShieldBlock::Player::stopUsingItem", ShieldStopUsingHook::hook());
+    reportHook("ShieldBlock::SurvivalMode::attack", ShieldAttackHook::hook());
 }
 
 void uninstall() {

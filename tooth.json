@@ -17,7 +17,7 @@
       "label": "client",
       "platform": "win-x64",
       "dependencies": {
-        "github.com/LiteLDev/LeviLamina": "26.51.6"
+        "github.com/LiteLDev/LeviLamina#client": "26.51.6"
       },
       "assets": [
         {
@@ -29,7 +29,7 @@
             {
               "type": "dir",
               "src": "bedrock-edition-deputy/",
-              "dest": "plugins/bedrock-edition-deputy/"
+              "dest": "mods/bedrock-edition-deputy/"
             }
           ]
         }
@@ -48,7 +48,7 @@
       }
     },
     {
-      "label": "server",
+      "label": "",
       "platform": "win-x64",
       "dependencies": {
         "github.com/LiteLDev/LeviLamina": "26.51.6"
