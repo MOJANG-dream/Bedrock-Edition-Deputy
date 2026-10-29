@@ -322,8 +322,16 @@ LL_TYPE_INSTANCE_HOOK(
     void,
     ::std::unique_ptr<::ComplexInventoryTransaction> transaction
 ) {
-    if (transaction != nullptr && offhands::HandSwapScope::isActive(*this)) {
-        offhands::markTransaction(*transaction);
+    if (transaction != nullptr) {
+        bool const swapping = offhands::HandSwapScope::isActive(*this);
+        if (swapping) {
+            offhands::markTransaction(*transaction);
+        }
+        // 诊断：松开事务到底有没有从客户端发出去，是「盾牌卡住」的核心证据。
+        debugLog(
+            std::string("[tx] client send type=") + std::to_string(static_cast<int>(transaction->mType))
+            + " swapped=" + (swapping ? "1" : "0")
+        );
     }
     origin(std::move(transaction));
 }
