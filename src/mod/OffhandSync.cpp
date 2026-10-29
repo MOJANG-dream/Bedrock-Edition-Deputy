@@ -2,6 +2,7 @@
 
 #include "mod/DebugLog.h"
 #include "mod/Offhands.h"
+#include "mod/OffhandUse.h"
 
 #include "ll/api/memory/Hook.h"
 
@@ -190,6 +191,11 @@ LL_TYPE_INSTANCE_HOOK(
 
     if (error == ::InventoryTransactionError::NoError) {
         gSwappedLegacySlots = {&player, slot};
+    } else {
+        // 松开事务到了、但原版处理失败：服务端不会停用，盾牌就一直举着放不下。
+        // 让服务端自己的 tick 替这名玩家收尾。
+        offhand_use::scheduleServerStop(player.getRuntimeID().rawID);
+        debugLog("[tx] release handle failed -> schedule server stop");
     }
 
     slot = offhands::kTransactionSlotMarker;

@@ -24,9 +24,9 @@
 #include "mc/world/item/registry/ItemRegistry.h"
 #include "mc/world/item/registry/ItemRegistryRef.h"
 
+#include <atomic>
 #include <string>
 #include <vector>
-
 // 全局作用域前向声明：buildServerRegistry 钩子的参数类型（放进命名空间会变成不同类型）。
 class BaseGameVersion;
 class IMinecraftEventing;
@@ -156,6 +156,20 @@ void markTransaction(ComplexInventoryTransaction& transaction) {
         break;
     }
 }
+
+// ---------------------------------------------------------------------------
+// 松开事务是否真的发出去了
+// ---------------------------------------------------------------------------
+
+namespace {
+// 与 markTransaction 同线程使用（客户端主线程发出、客户端主线程读取），
+// 但服务端收尾钩子在服务器线程读，故用 atomic 而不是 bool。
+std::atomic<bool> gReleaseTransactionSent{false};
+} // namespace
+
+void noteReleaseTransactionSent() { gReleaseTransactionSent.store(true); }
+
+bool takeReleaseTransactionSent() { return gReleaseTransactionSent.exchange(false); }
 
 // ---------------------------------------------------------------------------
 // HandSwapScope

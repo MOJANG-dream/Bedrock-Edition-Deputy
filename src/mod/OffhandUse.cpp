@@ -9,6 +9,7 @@
 #include "mc/deps/shared_types/legacy/item/UseAnimation.h"
 #include "mc/entity/components/ItemInUseComponent.h"
 #include "mc/legacy/ActorRuntimeID.h"
+#include "mc/server/ServerPlayer.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/actor/player/PlayerItemInUse.h"
 #include "mc/world/gamemode/GameMode.h"
@@ -19,6 +20,8 @@
 #include "mc/client/player/LocalPlayer.h"
 #endif
 
+#include <atomic>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 
@@ -39,6 +42,12 @@ constexpr int kFeedParticleDuration = 26;
 constexpr int kFeedParticleInterval = 4;
 
 void debugLog(std::string const& line) { appendDebugLog(line); }
+
+std::string itemName(Item const* item) { return item != nullptr ? item->mFullName->getString() : std::string("-"); }
+
+// 客户端松开了副手物品、但松开事务没有发出去时，记下这个玩家，由服务端的
+// normalTick 强制收尾（否则服务端永远停在「使用中」，盾牌放不下来）。
+std::atomic<uint64_t> gPendingServerStop{0};
 
 bool hasFeedingAnimation(UseAnimation animation) {
     return animation == UseAnimation::Eat || animation == UseAnimation::Drink
@@ -201,10 +210,11 @@ LL_TYPE_INSTANCE_HOOK(
     auto       component  = player.getEntityContext().tryGetComponent<ItemInUseComponent>();
     int const  duration   = component ? component->mDuration : -1;
     Item const* item      = player.mItemInUse.get().mItem.get().mItem.get();
+    Item const* selected  = player.getSelectedItem().mItem.get();
     std::string const where =
         std::string("[use] releaseUsingItem local=") + (player.isLocalPlayer() ? "1" : "0")
-        + " ecsDur=" + std::to_string(duration)
-        + " item=" + (item != nullptr ? item->mFullName->getString() : std::string("-"))
+        + " ecsDur=" + std::to_string(duration) + " item=" + itemName(item)
+        + " sel=" + itemName(selected)
         + " offhandUse=" + (offhandUse ? "1" : "0") + " scope=" + (scopeActive ? "1" : "0")
         + " cid=" + std::to_string(static_cast<int>(player.mItemInUse.get().mSlot.get().mContainerId));
     debugLog(where);
@@ -214,8 +224,19 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
 
-    offhands::HandSwapScope scope(player);
-    origin();
+    // 清掉上一次的残留，再交给原版处理；处理完检查这一次到底有没有发出松开事务。
+    offhands::takeReleaseTransactionSent();
+    {
+        offhands::HandSwapScope scope(player);
+        origin();
+    }
+    if (player.isLocalPlayer() && !offhands::takeReleaseTransactionSent()) {
+        // 客户端停用了本地使用、却没有发出松开事务：服务端收不到，会一直停在
+        // 「使用中」（盾牌举着放不下、之后每刻刷新格挡）。记下这名玩家，让服务端
+        // 自己的 tick 收尾。真联机时本机没有对应 ServerPlayer，补救自然不生效。
+        gPendingServerStop.store(player.getRuntimeID().rawID);
+        debugLog("[use] release transaction missing -> schedule server stop");
+    }
 }
 
 } // namespace
@@ -286,14 +307,14 @@ LL_TYPE_INSTANCE_HOOK(
         return;
     }
     // 标志里带过来的是「剩余时长」。时长缺失时退回物品自身的时长。
-    //
-    // 绝不能在这里造一个假的 72000：钓鱼竿这类瞬发物品的时长本来就是 0（抛投只挂一个
-    // 空的使用状态，收杆靠第二次点击），给它补 72000 会让它变成「持续使用中」，下一次
-    // tick 的松开立刻回调物品的收杆逻辑——表现就是抛出即收回、并且之后每刻空转
-    // stopUsingItem。时长真的为 0 时按原版语义转交 origin，并清掉手别记录。
     int const useDuration = duration > 0 ? duration : offhandType->getMaxUseDuration(&offhandItem);
     if (useDuration <= 0) {
-        origin(instance, duration);
+        // 时长为 0 的瞬发物品（钓鱼竿抛投等）根本没有「持续使用中」这个状态：
+        // 原版在 startUsingItem 之后靠下一次 normalTick 立刻收尾。若在这里照原版
+        // 重启一个 0 时长的使用，客户端会留下一个永远收不了尾的使用状态——物品
+        // 已经用完、状态还在，之后每刻都被 stopUsingItem 收尾（实测每秒 18 次），
+        // 收杆回调也随之中断，表现就是抛出即收回。这类物品的使用已经在
+        // baseUseItem 里完成，这里不再开始任何使用状态。
         gServerOffhandUse.erase(this->getRuntimeID().rawID);
         return;
     }
@@ -306,7 +327,26 @@ LL_TYPE_INSTANCE_HOOK(
     }
 }
 
+// 客户端「停用了使用但没把松开事务发出来」时的服务端补救：这名玩家还在用副手
+// 物品，就替他收尾。只在有本地整合服（单机/局域网主机）时才会跑到。
+LL_TYPE_INSTANCE_HOOK(
+    OffhandServerReleaseRepairHook,
+    HookPriority::Normal,
+    ServerPlayer,
+    &ServerPlayer::$normalTick,
+    void
+) {
+    uint64_t const pending = gPendingServerStop.exchange(0);
+    if (pending != 0 && pending == this->getRuntimeID().rawID && offhands::isUsingOffhandItem(*this)) {
+        debugLog("[use] server repair: client release was lost -> stopUsingItem");
+        this->stopUsingItem();
+    }
+    origin();
+}
+
 } // namespace
+
+void scheduleServerStop(uint64_t runtimeId) { gPendingServerStop.store(runtimeId); }
 
 void install() {
     reportHook("OffhandUse::Player::normalTick", OffhandItemTickHook::hook());
@@ -318,9 +358,11 @@ void install() {
     // 注册失败要能在日志里看到，否则「手别记录」会一直不清。
     reportHook("OffhandUse::Player::stopUsingItem", OffhandStopUseHook::hook());
     reportHook("OffhandUse::Player::startUsingItem", OffhandStartUseHook::hook());
+    reportHook("OffhandUse::ServerPlayer::normalTick", OffhandServerReleaseRepairHook::hook());
 }
 
 void uninstall() {
+    OffhandServerReleaseRepairHook::unhook();
     OffhandStartUseHook::unhook();
     OffhandStopUseHook::unhook();
     OffhandReleaseUseHook::unhook();

@@ -327,6 +327,11 @@ LL_TYPE_INSTANCE_HOOK(
         if (swapping) {
             offhands::markTransaction(*transaction);
         }
+        // 记录「客户端确实把松开事务发出去了」。实测有两成情况客户端停用了本地
+        // 使用、却完全没有发出这个事务，服务端于是永远停在「使用中」。
+        if (transaction->mType == ::ComplexInventoryTransaction::Type::ItemReleaseTransaction) {
+            offhands::noteReleaseTransactionSent();
+        }
         // 诊断：松开事务到底有没有从客户端发出去，是「盾牌卡住」的核心证据。
         debugLog(
             std::string("[tx] client send type=") + std::to_string(static_cast<int>(transaction->mType))

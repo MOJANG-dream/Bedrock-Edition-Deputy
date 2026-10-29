@@ -32,6 +32,12 @@ void setItemInUseSlotToOffhand(::Player& player);
 // 作用域内产生的库存事务其实是关于副手的，接收端也要交换双手来处理。
 void markTransaction(::ComplexInventoryTransaction& transaction);
 
+// 客户端松开副手物品时是否真的发出了松开事务（ComplexInventoryTransaction 的
+// type 4）。实测有两成情况客户端停用了本地使用、却完全没有发出这个事务，服务端
+// 于是永远停在「使用中」——盾牌卡住放不下的主要成因。发送钩子置位，松开钩子读取。
+void noteReleaseTransactionSent();
+bool takeReleaseTransactionSent();
+
 // 原版所有「手持物品」路径都读写背包选中槽，把它和副手槽临时物理对调，
 // 这些路径就会作用于副手。作用域外看不到这次对调：两个槽的变更通知都被
 // 暂时拦下，退出时只上报真正发生变化的那个槽。
