@@ -1,4 +1,4 @@
-#include "mod/DebugLog.h"
+#include "mod/DebugLog.h"#include "mod/DebugLog.h"
 
 #include "mod/Config.h"
 
@@ -34,7 +34,7 @@ void appendDebugLog(std::string_view line) {
         return;
     }
     auto mod = ll::mod::NativeMod::current();
-    if (!mod) {
+#include "mod/DebugLog.h"    if (!mod) {
         return;
     }
     std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::app);
