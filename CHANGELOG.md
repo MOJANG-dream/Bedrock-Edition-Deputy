@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 面板打开时停用模组会把借用的原版对话框留在屏幕上且关不掉：卸载时先退出该场景，再卸载 Scene 钩子。
 - 诊断日志此前始终开启：输入、格挡、交换等热路径每次调用都会打开文件追加，服务端「使用中」每刻都在写盘；现在默认关闭，仅在 `config.json` 的 `enableDebugLog` 为真时写入 `offhand-debug.log`，并把 7 份重复实现合并到 `mod/DebugLog.h`。
 - 钩子注册失败此前只写进诊断日志（现默认关闭，等于静默失效）：改为通过 `reportHook()` 以错误级别写模组日志。
+- 副手钓鱼竿抛出后立刻收回：`tickOffhandItemInUse` 在使用时长归零时无条件调用 `completeUsingItem()`，而该调用会回调物品自身的「松开」逻辑（钓竿当场收线）。改为只有物品本身带使用时长时才补完成，瞬发物品（钓竿抛投等）只清掉旧的使用字段、不触发物品回调。
+- 盾牌快速点一下右键后举着放不下：记录「这次使用用的是哪只手」的表从不清除，同一个 runtimeId 后续的主手使用会读到上一条副手记录，把选中槽物品替换成副手物品重新开始使用；改为使用结束时（`Player::stopUsingItem`）与重启失败时清除，并在重启时长为 0 时退回物品时长（再退回 72000），避免客户端立刻结束使用、再也发不出松开。
+- 副手长矛无法蓄力、打不出伤害：注册期补 `mMaxUseDuration` 的判定只认 `UseAnimation::Block`/`Spear`，而数据驱动的「矛」动画可能是 `None`，时长为 0 等于「立刻用完」；改为再按物品名（`spear`/`trident`/`shield`）兜底。
+- 副手三叉戟模型内外翻转、举矛抖动动画缺失：本版头文件未导出 `ItemRenderCall::mIsFlat`，平面精灵启发式把三叉戟/矛/钓竿这类 3D 模型物品误判成平面精灵并翻转；改为按物品名兜底为模型物品。资源包补回原版的 `wield_first_person_raise_shake` 与 `query.has_target` 举矛条件。
 
 ### Changed
 
