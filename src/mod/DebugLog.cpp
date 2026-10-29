@@ -13,20 +13,9 @@
 namespace bedrock_edition_deputy {
 
 bool debugLogEnabled() {
-    if (modConfig().enableDebugLog) {
-        return true;
-    }
-    // 兜底开关：模组目录下放一个 debug.on 文件即强制开启。配置在版本迁移时可能
-    // 被重置成默认值，这时光靠 config.json 里的开关无法打开诊断日志。
-    static bool const marker = [] {
-        auto mod = ll::mod::NativeMod::current();
-        if (!mod) {
-            return false;
-        }
-        std::error_code ec;
-        return std::filesystem::exists(mod->getModDir() / "debug.on", ec);
-    }();
-    return marker;
+    // 【临时诊断构建】本版无条件写日志：启动器会在每次启动时把模组目录里的
+    // config.json 重置成默认值并删掉 debug.on，开关一律失效。定位完问题后恢复。
+    return true;
 }
 
 void appendDebugLog(std::string_view line) {
@@ -53,7 +42,13 @@ void resetDebugLog() {
     }
     std::ofstream out(mod->getModDir() / "offhand-debug.log", std::ios::trunc);
     if (out) {
+        auto const& cfg = modConfig();
         out << "== bedrock-edition-deputy debug ==\n";
+        out << "[cfg] dir=" << mod->getModDir().string() << '\n';
+        out << "[cfg] enableSwapKey=" << cfg.enableSwapKey << " swapKey=" << cfg.swapKey
+            << " menuKey=" << cfg.menuKey << " shieldRightClick=" << cfg.enableShieldRightClick
+            << " invOffhand=" << cfg.enableInventoryOffhand << " offhandSlot=" << cfg.enableOffhandSlot
+            << " debug=" << cfg.enableDebugLog << '\n';
     }
 }
 
