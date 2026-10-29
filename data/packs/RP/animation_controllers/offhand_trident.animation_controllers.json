@@ -11,6 +11,9 @@
 							"wield_first_person_raise": "variable.offhand_item_use > 0.0 ? query.get_equipped_item_name('off_hand') == 'trident' : query.main_hand_item_use_duration > 0.0f"
 						},
 						{
+							"wield_first_person_raise_shake": "variable.offhand_item_use > 0.0 ? query.get_equipped_item_name('off_hand') == 'trident' : query.main_hand_item_use_duration > 0.0f"
+						},
+						{
 							"wield_first_person_riptide": "query.can_damage_nearby_mobs > 0.0"
 						}
 					],
@@ -24,7 +27,7 @@
 					"animations": [
 						"wield_third_person",
 						{
-							"wield_third_person_raise": "variable.offhand_item_use > 0.0 ? query.get_equipped_item_name('off_hand') == 'trident' : query.main_hand_item_use_duration > 0.0f"
+							"wield_third_person_raise": "variable.offhand_item_use > 0.0 ? query.get_equipped_item_name('off_hand') == 'trident' : (query.main_hand_item_use_duration > 0.0f || query.has_target)"
 						}
 					],
 					"transitions": [
