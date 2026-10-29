@@ -23,7 +23,9 @@ namespace bedrock_edition_deputy::offhand_resource_pack {
 namespace {
 
 // data/packs/RP/manifest.json 的 header uuid 与版本。
-constexpr char kPackIdVersion[] = "3f8c7a2e-5b4d-4e1a-9c6f-2d8a7b1e5f30_1.0.0";
+// 改过包内文件就要升版本：基岩版按 uuid+version 缓存已加载的包内容，
+// 版本不变时游戏可能仍用缓存里的旧动画/控制器。
+constexpr char kPackIdVersion[] = "3f8c7a2e-5b4d-4e1a-9c6f-2d8a7b1e5f30_1.0.1";
 
 LL_TYPE_INSTANCE_HOOK(
     ComposeFullStackHook,
