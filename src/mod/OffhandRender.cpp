@@ -3,6 +3,7 @@
 
 #include "mod/OffhandRender.h"
 
+#include "mod/DebugLog.h"
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
@@ -109,6 +110,19 @@ Matrix mirrored(Matrix const& transform) {
 
 // LL 的 Matrix 没有 mult，用 glm 乘法代替 pose.mult(other)。
 void multInPlace(Matrix& pose, Matrix const& other) { pose._m.get() = pose._m.get() * other._m.get(); }
+
+std::string itemName(Item const* type) {
+    return type != nullptr ? type->mFullName->getString() : std::string("-");
+}
+
+// 渲染诊断：每 60 次调用记一行（第一人称约每秒一次），用来确认某个物品到底走了
+// 哪条绘制路径（自绘姿态 / JSON 矩阵交还原版 / attachable）。
+void renderDebugLog(std::string const& line) {
+    static int calls = 0;
+    if (++calls % 60 == 0) {
+        appendDebugLog(line);
+    }
+}
 
 // 组件基类物品（1.21+ 数据驱动物品）的渲染矩阵由 JSON 决定，交回原版路径，
 // 避免自绘姿态与 JSON 变换叠加。
@@ -345,7 +359,15 @@ LL_TYPE_INSTANCE_HOOK(
 
     // 空手、地图/照片与数据驱动 JSON 矩阵物品交由原版处理。
     if (!offhands::hasItem(item) || item.isInstance(::HashedString{"minecraft:filled_map"}, false)
-        || item.isInstance(::HashedString{"minecraft:photo_item"}, false) || setsMatrixFromJson(item)) {
+        || item.isInstance(::HashedString{"minecraft:photo_item"}, false)) {
+        origin(renderContext, player, itemFlags);
+        return;
+    }
+    if (setsMatrixFromJson(item) && !isModelItem(item.mItem.get())) {
+        // 数据驱动 JSON 矩阵物品交还原版；但 3D 模型物品（三叉戟/矛）必须走自绘：
+        // 原版在副手第一人称里会把它们的模型按世界尺度画出来（实测是一根顶穿屏幕的
+        // 青绿色巨柱），自绘姿态才有正确的 0.4 缩放与镜像。
+        renderDebugLog(std::string("[rnd] offhand json-matrix item=") + itemName(item.mItem.get()));
         origin(renderContext, player, itemFlags);
         return;
     }
@@ -357,6 +379,13 @@ LL_TYPE_INSTANCE_HOOK(
     ::Block const* block               = item.getBlockForRendering();
     bool const     useBlockTransforms  = block != nullptr && usesNewTessellation(*block)
         && ::BlockTessellator::canRender(::BlockGraphics::getForBlock(*block)->mBlockShape);
+
+    Item const* const renderedType = item.mItem.get();
+    renderDebugLog(
+        std::string("[rnd] offhand item=") + itemName(renderedType) + " block=" + (block != nullptr ? "1" : "0")
+        + " blocktf=" + (useBlockTransforms ? "1" : "0") + " model=" + (isModelItem(renderedType) ? "1" : "0")
+        + " dur=" + std::to_string(itemUseDuration(player))
+    );
 
     float const  frameAlpha = renderContext.getFrameAlpha(player);
     Matrix const pose       = computeHeldItemPose(*this, player, item, block, useBlockTransforms, frameAlpha);
@@ -519,6 +548,9 @@ LL_TYPE_INSTANCE_HOOK(
     ::RenderParams&              renderParams,
     ::Actor&                     actor
 ) {
+    if (attachableSlotIndex == ::AttachableSlotIndex::OffhandItem) {
+        renderDebugLog(std::string("[rnd] setup-attachable offhand item=") + itemName(itemInstance.mItem.get()));
+    }
     if (!mirrorsOffhandAttachable(itemInstance, attachableSlotIndex, actor)) {
         origin(itemInstance, attachableSlotIndex, renderParams, actor);
         return;
@@ -541,6 +573,9 @@ LL_TYPE_INSTANCE_HOOK(
     ::RenderParams&              renderParams,
     ::Actor&                     actor
 ) {
+    if (attachableSlotIndex == ::AttachableSlotIndex::OffhandItem) {
+        renderDebugLog(std::string("[rnd] attachable offhand item=") + itemName(itemInstance.mItem.get()));
+    }
     if (!mirrorsOffhandAttachable(itemInstance, attachableSlotIndex, actor)) {
         origin(itemInstance, attachableSlotIndex, renderParams, actor);
         return;

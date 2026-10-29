@@ -206,6 +206,13 @@ LL_TYPE_INSTANCE_HOOK(
 ) {
     bool const hit = origin(entity, hitPosition);
 
+    // 诊断：副手长矛蓄力松开后到底有没有走到「攻击」这一步。
+    debugLog(
+        std::string("[atk] survival attack local=") + (mPlayer.isLocalPlayer() ? "1" : "0")
+        + " hit=" + (hit ? "1" : "0") + " sel=" + itemName(mPlayer.getSelectedItem().mItem.get())
+        + " using=" + (offhands::isUsingItem(mPlayer) ? "1" : "0")
+    );
+
     if (hit && modConfig().enableShieldRightClick && isUsingShield(mPlayer)) {
         debugLog(std::string("[hook] attack cancels blocking ") + usingState(mPlayer));
         mPlayer.stopUsingItem();

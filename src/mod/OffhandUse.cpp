@@ -96,6 +96,7 @@ void tickOffhandItemInUse(Player& player) {
     // ItemInUseComponent 由 ItemInUseComponentRemoveSystem 异步回收。
     int const maxDuration = item == nullptr ? 0 : item->getMaxUseDuration(&offhandItem);
     if (maxDuration <= 0) {
+        debugLog(std::string("[use] instant use cleared item=") + itemName(item));
         itemInUse.mItem.get() = ::ItemStack{};
         return;
     }
@@ -273,6 +274,17 @@ LL_TYPE_INSTANCE_HOOK(
     ::ItemStack const& instance,
     int                duration
 ) {
+    // 诊断：谁以什么时长启动了使用。钓竿这类瞬发物品的「使用」到底是谁起的、
+    // 时长是不是 0，只有这一行能说清。
+    Item const* startedType = instance.mItem.get();
+    debugLog(
+        std::string("[use] start item=") + itemName(startedType)
+        + " dur=" + std::to_string(duration)
+        + " maxdur=" + std::to_string(startedType != nullptr ? startedType->getMaxUseDuration(&instance) : 0)
+        + " local=" + (this->isLocalPlayer() ? "1" : "0")
+        + " scope=" + (offhands::HandSwapScope::isActive(*this) ? "1" : "0")
+    );
+
     if (!this->isLocalPlayer()) {
         // 服务端侧（含本地整合服的 ServerPlayer 与客户端的 RemotePlayer）。
         origin(instance, duration);
@@ -284,7 +296,6 @@ LL_TYPE_INSTANCE_HOOK(
         }
         return;
     }
-
     // 标志重启传入的是选中槽物品本身的引用；输入发起的使用传入的是副本。
     // 交换作用域里发起的这一次是我们自己的副手轮次（instance 就是副手物品，已经被
     // 换到选中槽），不能再按「副手槽」去重启——那时副手槽里躺着的是被换出去的主手
