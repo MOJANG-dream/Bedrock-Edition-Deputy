@@ -38,6 +38,9 @@ using SharedTypes::Legacy::UseAnimation;
 constexpr int kFeedParticleDuration = 26;
 constexpr int kFeedParticleInterval = 4;
 
+// 物品没有可用的使用时长时的兜底值（Java 版 ShieldItem/TridentItem 的 72000，约 1 小时）。
+constexpr int kFallbackUseDuration = 72000;
+
 void debugLog(std::string const& line) { appendDebugLog(line); }
 
 bool hasFeedingAnimation(UseAnimation animation) {
@@ -74,6 +77,20 @@ void tickOffhandItemInUse(Player& player) {
     }
 
     if (component != nullptr && component->mDuration != 0) {
+        return;
+    }
+
+    // 只有「真的一直用到时长数完」的物品才需要在这里补一次完成（进食/饮用/发光棒、
+    // 弓/三叉戟/矛的满蓄力：原版会走到 completeUsingItem，但使用物品被 count=0 藏了
+    // 起来，只能由我们代劳）。
+    //
+    // 时长本来就是 0 的物品是瞬发使用——原版只是顺手把「使用中」挂上（钓鱼竿抛投就是
+    // 这种）。这时绝不能调 completeUsingItem：它会回调物品自己的「松开」逻辑，钓竿
+    // 会当场收线、抛投变成「抛出即收回」。直接清掉旧字段，不触发任何物品回调；ECS 的
+    // ItemInUseComponent 由 ItemInUseComponentRemoveSystem 异步回收。
+    int const maxDuration = item == nullptr ? 0 : item->getMaxUseDuration(&offhandItem);
+    if (maxDuration <= 0) {
+        itemInUse.mItem.get() = ::ItemStack{};
         return;
     }
 
@@ -207,6 +224,21 @@ namespace {
 
 std::unordered_map<uint64_t, bool> gServerOffhandUse;
 
+// 「这一次使用用的是哪只手」只在这次使用期间有意义。使用一结束就必须清掉记录，
+// 否则同一个 runtimeID 之后的主手使用会读到上一条「副手」记录：标志重启时把
+// 选中槽的物品替换成副手物品重新开始使用——表现就是点一下右键，副手盾被举起来
+// 之后再也放不下（客户端与服务端的使用对象已经对不上了）。
+LL_TYPE_INSTANCE_HOOK(
+    OffhandStopUseHook,
+    HookPriority::Normal,
+    Player,
+    &Player::stopUsingItem,
+    void
+) {
+    gServerOffhandUse.erase(this->getRuntimeID().rawID);
+    origin();
+}
+
 LL_TYPE_INSTANCE_HOOK(
     OffhandStartUseHook,
     HookPriority::Normal,
@@ -221,13 +253,20 @@ LL_TYPE_INSTANCE_HOOK(
         origin(instance, duration);
         if (offhands::isUsingItem(*this)) {
             gServerOffhandUse[this->getRuntimeID().rawID] = offhands::HandSwapScope::isActive(*this);
+        } else {
+            // 这次使用根本没成立（时长为 0 等），不能留下指向它的记录。
+            gServerOffhandUse.erase(this->getRuntimeID().rawID);
         }
         return;
     }
 
     // 标志重启传入的是选中槽物品本身的引用；输入发起的使用传入的是副本。
-    bool const fromFlag = &instance == &this->getSelectedItem();
-    auto const hand     = fromFlag ? gServerOffhandUse.find(this->getRuntimeID().rawID) : gServerOffhandUse.end();
+    // 交换作用域里发起的这一次是我们自己的副手轮次（instance 就是副手物品，已经被
+    // 换到选中槽），不能再按「副手槽」去重启——那时副手槽里躺着的是被换出去的主手
+    // 物品，重启出来的会是错的那一件。
+    bool const fromFlag =
+        !offhands::HandSwapScope::isActive(*this) && &instance == &this->getSelectedItem();
+    auto const hand = fromFlag ? gServerOffhandUse.find(this->getRuntimeID().rawID) : gServerOffhandUse.end();
     if (hand == gServerOffhandUse.end() || !hand->second) {
         origin(instance, duration);
         return;
@@ -242,9 +281,21 @@ LL_TYPE_INSTANCE_HOOK(
         origin(instance, duration);
         return;
     }
-    origin(offhandItem, offhandType->getMaxUseDuration(&offhandItem));
+    // 标志里带过来的是「剩余时长」，短促点击时它可能已经是 0。用 0 重启的话这次
+    // 使用在客户端会立刻结束，客户端也就再不会发出松开事务，服务端一直停在
+    // 「举盾中」——表现正是快速点一下右键后盾牌举起来放不下。时长缺失时退回
+    // 物品自身的时长，再退到 Java 版的 72000，保证重启出来的是一个真正在进行
+    // 的使用状态。
+    int useDuration = duration > 0 ? duration : offhandType->getMaxUseDuration(&offhandItem);
+    if (useDuration <= 0) {
+        useDuration = kFallbackUseDuration;
+    }
+    origin(offhandItem, useDuration);
     if (offhands::isUsingItem(*this)) {
         offhands::setItemInUseSlotToOffhand(*this);
+    } else {
+        // 重启没成立（物品不可用等）：记录失效，别让下一次主手使用再走副手分支。
+        gServerOffhandUse.erase(this->getRuntimeID().rawID);
     }
 }
 
@@ -256,11 +307,15 @@ void install() {
     OffhandLocalItemTickHook::hook();
 #endif
     OffhandReleaseUseHook::hook();
+    // 与 ShieldBlock 的 Player::stopUsingItem 钩子并存（多钩子按优先级串行），
+    // 注册失败要能在日志里看到，否则「手别记录」会一直不清。
+    reportHook("OffhandUse::Player::stopUsingItem", OffhandStopUseHook::hook());
     OffhandStartUseHook::hook();
 }
 
 void uninstall() {
     OffhandStartUseHook::unhook();
+    OffhandStopUseHook::unhook();
     OffhandReleaseUseHook::unhook();
 #ifdef LL_PLAT_C
     OffhandLocalItemTickHook::unhook();
