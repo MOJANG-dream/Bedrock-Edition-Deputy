@@ -1,4 +1,4 @@
-#include "mod/DeputyMod.h"
+#include "mod/DeputyMod.h"#include "mod/DeputyMod.h"
 
 #include "mod/Config.h"
 #include "mod/DebugLog.h"
@@ -34,7 +34,7 @@
 
 #include <atomic>
 #include <functional>
-#include <vector>
+#include "mod/DeputyMod.h"#include <vector>
 
 // 不包含 <windows.h>：它会引入 ERROR/interface/small/min/max 等大量宏，
 // 与 LeviLamina / MC 头文件冲突。这里仅前向声明所需的 user32 函数。
@@ -71,7 +71,7 @@ bool altDownNow() {
 
 void runOnClientThread(std::function<void()> task) {
     ll::thread::ClientThreadExecutor::getDefault().execute(std::move(task));
-}
+#include "mod/DeputyMod.h"}
 
 #endif // LL_PLAT_C
 
