@@ -1,5 +1,6 @@
 #include "mod/OffhandSync.h"
 
+#include "mod/DebugLog.h"
 #include "mod/Offhands.h"
 
 #include "ll/api/memory/Hook.h"
@@ -19,6 +20,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -27,6 +29,8 @@
 namespace bedrock_edition_deputy::offhand_sync {
 
 namespace {
+
+void debugLog(std::string const& line) { appendDebugLog(line); }
 
 // 双端：监听者（HUD、容器模型、服务端物品堆叠 id）不应看到 HandSwapScope 的对调，
 // 作用域结束时才会上报净变化。
@@ -163,6 +167,9 @@ LL_TYPE_INSTANCE_HOOK(
     gSwappedLegacySlots = {};
 
     if (mSlot != offhands::kTransactionSlotMarker) {
+        // 诊断：未标记的松开事务（原样透传）——如果卡住的那一次走了这条分支，
+        // 说明客户端的松开没有经过 HandSwapScope，服务端不会按「副手已交换」处理。
+        debugLog(std::string("[tx] server release unmarked slot=") + std::to_string(mSlot));
         return origin(player, isSenderAuthority);
     }
 
@@ -174,6 +181,12 @@ LL_TYPE_INSTANCE_HOOK(
         offhands::HandSwapScope scope(player);
         error = origin(player, isSenderAuthority);
     }
+
+    // 诊断：服务端收到松开事务后原版处理是否成功（失败时不会停用，盾牌就卡住了）。
+    debugLog(
+        std::string("[tx] server release marked selected=") + std::to_string(slot)
+        + " err=" + std::to_string(static_cast<int>(error))
+    );
 
     if (error == ::InventoryTransactionError::NoError) {
         gSwappedLegacySlots = {&player, slot};
