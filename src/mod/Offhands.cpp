@@ -56,17 +56,24 @@ void applyOffhandFlags(ItemRegistry& registry) {
         }
         item->mAllowOffhand = ::Item::OffhandAllowed::Yes;
         // Java 版 ShieldItem#getUseDuration / TridentItem#getUseDuration 均为 72000；
-        // 基岩版盾牌与长矛从不「被使用」，因此没有时长（蓄力时长为 0 会立刻完成使用）。
-        if ((item->mUseAnim == ::SharedTypes::Legacy::UseAnimation::Block
-             || item->mUseAnim == ::SharedTypes::Legacy::UseAnimation::Spear)
-            && item->mMaxUseDuration == 0) {
+        // 基岩版盾牌与长矛从不「被使用」，因此没有时长——而时长 0 等于「立刻用完」，
+        // 副手矛就永远蓄不起来（表现为不能蓄力、打不出伤害）。新版「矛」是数据驱动
+        // 武器，mUseAnim 可能仍是 None，所以除了按使用动画判定，再按物品名兜底。
+        auto const name        = item->mFullName->getString();
+        bool const namedWeapon = name.find("spear") != std::string::npos
+            || name.find("trident") != std::string::npos || name.find("shield") != std::string::npos;
+        bool const chargeable = item->mUseAnim == ::SharedTypes::Legacy::UseAnimation::Block
+            || item->mUseAnim == ::SharedTypes::Legacy::UseAnimation::Spear || namedWeapon;
+        if (chargeable && item->mMaxUseDuration == 0) {
             item->mMaxUseDuration = 72000;
         }
         // 诊断：转储所有带使用动画的物品，确认新版「矛」的动画值与蓄力时长。
-        if (item->mUseAnim != ::SharedTypes::Legacy::UseAnimation::None) {
+        // 矛/三叉戟/盾/钓竿即使动画是 None 也一并打印（None 正是「蓄力不起来」的可疑值）。
+        bool const diagnostic = item->mUseAnim != ::SharedTypes::Legacy::UseAnimation::None || chargeable
+            || name == "minecraft:fishing_rod";
+        if (diagnostic) {
             debugLog(
-                std::string("[reg] item=") + item->mFullName->getString()
-                + " anim=" + std::to_string(static_cast<int>(item->mUseAnim))
+                std::string("[reg] item=") + name + " anim=" + std::to_string(static_cast<int>(item->mUseAnim))
                 + " maxDur=" + std::to_string(item->mMaxUseDuration)
             );
         }
